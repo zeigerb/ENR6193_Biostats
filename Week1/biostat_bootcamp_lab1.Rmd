@@ -16,39 +16,39 @@ Much of our work in this class will involve **data**—sometimes data we collect
 
 > The data we have are almost never the data we *wish* we had.
 
-This is exactly the point made in **Chapter 1 of _Regression and Other Stories_ (ROS)**. Statistics is not just about fitting models; it is about **generalizing**, and generalization is difficult for three reasons:
+This is exactly the point made in **Chapter 1 of *Regression and Other Stories* (ROS)**. Statistics is not just about fitting models; it is about **generalizing**, and generalization is difficult for three reasons:
 
-1. We want to generalize from a **sample to a population**  
-2. We want to generalize from **treatments to controls**  
-3. We want to generalize from **measurements to underlying constructs**
+1.  We want to generalize from a **sample to a population**\
+2.  We want to generalize from **treatments to controls**\
+3.  We want to generalize from **measurements to underlying constructs**
 
 In disease ecology, these problems show up all the time. Tick drags, chigger plate counts, and fly sweeps are all examples of samples, not populations. Tick counts are imperfect proxies for host encounter and exposure risk. Count data and the environmental variables collected with these types of samples are often noisy and incomplete. And yet, we still want to learn something from these data and do our best to acknowledge key limitations and assumptions.
 
 The goal of this lab is *not* to fit a regression model. Instead, the goal is to develop good habits for:
 
-- Knowing what data you actually have  
-- Visualizing patterns before modeling  
-- Transforming variables carefully and transparently  
-- Being explicit about assumptions  
-- Writing simple, readable functions  
+-   Knowing what data you actually have\
+-   Visualizing patterns before modeling\
+-   Transforming variables carefully and transparently\
+-   Being explicit about assumptions\
+-   Writing simple, readable functions
 
 If you skip these steps, no statistical model—Bayesian or otherwise—will save you later. If you feel comfortable with these ideas already, then I suggest jumping into the Statistical Rethinking exercises!
 
----
+------------------------------------------------------------------------
 
 > A note on workflow (important)
 
 All labs in this independent study will be completed as **R markdown documents** (`.rmd` files, knitted to html or pdf files). These combine:
 
-- Text explaining what you are doing and why  
-- Code that does the work  
-- Output (tables, plots, summaries)
+-   Text explaining what you are doing and why\
+-   Code that does the work\
+-   Output (tables, plots, summaries)
 
 R markdown files are my favorite way to talk about code and work through problems together! You should think of this file as both your **lab notebook** and your **analysis script**.
 
-Render often. Save often. 
+Render often. Save often.
 
----
+------------------------------------------------------------------------
 
 > Setup
 
@@ -62,12 +62,11 @@ library(ggplot2)
 set.seed(101)
 ```
 
->Example system: simulated tick drag data
+> Example system: simulated tick drag data
 
 Rather than jumping straight into real data, we are going to simulate a tick drag dataset. This is deliberate. When you simulate data, you are forced to confront assumptions explicitly—something both ROS and Statistical Rethinking recommend.
 
-<div class="tick-callout">
-
+::: tick-callout
 #### What is a tick drag (for those who may not be aware)?
 
 A *tick drag* is a common field method used to sample host-seeking (or “questing”) ticks from the environment. In a typical tick drag, a square or rectangular piece of white cloth (often flannel or corduroy), typically 1m x 1m, is attached to a pole and slowly dragged across vegetation, leaf litter, or over other appropriate substrate depending on tick species of interest for a fixed distance or time. Ticks that are actively questing for a host latch onto the cloth and are then removed at regular intervals.
@@ -77,26 +76,34 @@ Because many medically important tick species spend part of their life cycle wai
 **What data are typically collected?**
 
 Tick drag datasets often include tick counts per drag or per unit distance, along with information on site, date, and time of sampling. Many studies also record tick species and life stage, sampling effort, habitat characteristics, and local environmental conditions such as temperature and relative humidity. Importantly, tick drag counts and associated pathogen information are *proxies* of population characteristics, not comprehensive measurements of true tick density or infection risk. Recognizing this distinction between what we measure and what we ultimately care about is a recurring theme in this ind. study and directly relates to the challenges of statistical inference discussed in Chapter 1 of Regression and Other Stories.
-
-</div>
+:::
 
 Before touching any code, pause for a moment and think (Type in your musings below each question):
 
 What does a single “tick drag observation” represent?
 
+-   A sample of how many ticks may be active in a given area at a given day/time.
+
 Why might two drags on the same day give different counts?
+
+-   The time of day, location, environmental variables may be impacting tick activity and abundance
+-   A second drag over the same location may find reduced activity if ticks were removed from the environment
 
 What environmental variables matter, and how imperfectly are they measured?
 
+-   Temperature, humidity, sun exposure, recency of precipitation, to name a few. The precision/accuracy of these is dependent on the quality of the tool used.
+-   Are varibales being measured at the drag location by a handheld unit or generally by a local station?
+-   Are variables being measured at every drag event, or once for the whole day?
+
 You don’t need perfect answers, but you do need to be thinking about these questions every time you open up a new dataset!.
 
->Step 1: Simulate the sampling design
+> Step 1: Simulate the sampling design
 
 We will assume:
 
 4 sites
 
-~3 weeks of sampling during presumed peak activity season for this life stage/species
+\~3 weeks of sampling during presumed peak activity season for this life stage/species
 
 Morning and afternoon visits
 
@@ -129,6 +136,7 @@ tick_drag$effort_m <- round(rnorm(nrow(tick_drag), mean = 100, sd = 5)) #we'll a
 head(tick_drag)
 
 ```
+
 At this point, every row represents one drag. That is already a decision that affects our modeling approaches, if we aggregated by site we could ask questions about site-level differences in tick counts, but before we start aggregating data to scales we find interesting it is important to visually check your data for characteristics that will let you know if aggregation is appropriate. Hierarchical/nested models or non-parametric tests are great ways of looking for patterns in aggregated data while accounting for issues like dramatically different variances between groups (often an issue in ectoparasite count data sets). It is always important to check the assumptions for your potential approaches before you start changing things like spatial or temporal scale for your data (clumping by site or year for example). Some common data properties to look out for are:
 
 -Multicollinearity: predictors that are strongly correlated with each other (e.g., temperature and RH), which can destabilize coefficient estimates and make “effects” hard to interpret.
@@ -137,7 +145,7 @@ At this point, every row represents one drag. That is already a decision that af
 
 -Overdispersion: variance greatly exceeding the mean in count data, which leads Poisson models to underestimate uncertainty.
 
--Nonlinearity: relationships that are curved, threshold-like, or otherwise not well approximated by a straight line on the scale you are modeling. Classic example here comes from Erin Mordecai's malaria mosquito/thermal threshold work, basically saying that ectoparasites don't simply have a minimum and maximum tolerable temperature, but a performance and reproduction fitness curve along a spectrum of temperatures which will have a clear maximum. When examining relationships between ectos and environmental variables it is often recommended to check for quadratic (^2) terms and some folks even argue to leave those in models even if fitting/selection processes recommend them to be removed because they are biologically plausible.
+-Nonlinearity: relationships that are curved, threshold-like, or otherwise not well approximated by a straight line on the scale you are modeling. Classic example here comes from Erin Mordecai's malaria mosquito/thermal threshold work, basically saying that ectoparasites don't simply have a minimum and maximum tolerable temperature, but a performance and reproduction fitness curve along a spectrum of temperatures which will have a clear maximum. When examining relationships between ectos and environmental variables it is often recommended to check for quadratic (\^2) terms and some folks even argue to leave those in models even if fitting/selection processes recommend them to be removed because they are biologically plausible.
 
 -Heteroskedasticity: residual variance that changes with fitted values or environmental conditions (often worse at high expected abundance).
 
@@ -145,11 +153,11 @@ At this point, every row represents one drag. That is already a decision that af
 
 -Influential points and leverage: a few high-count events or unusual environmental observations can dominate model fits and conclusions.
 
--Separation-like behavior (for binary outcomes): if we later convert to presence/absence, some combinations of predictors may perfectly predict presence, which creates estimation issues in logistic models. This can be pretty common in ecto contexts. Much of the time you'll have a suite of environmental variables controlling reproduction, a suite controlling likelihood of detection (microclimate/weather during sampling), and a suite of variables controlling survival throughout the questing season. The problem is you now have one type of response data you collected and three suites of important and likely correlated environmental variables of interest. You can simplify this problem by separating out your model framework into a hurdle form: a presence/absence model where all drags w/o ticks are "0" and any drag with >0 are labeled present or "1". You then use something like a zero-truncated negative binomial distribution to model the abundance data. Sometimes this type of modeling approach is called process modeling where you develop specific models that are targeting a biological process of interest as explicitly as possible, they are much more common in ecology practices where mechanisms are king and easily publishable and much less common in epi/med ent literature as far as I've been able to tell.
+-Separation-like behavior (for binary outcomes): if we later convert to presence/absence, some combinations of predictors may perfectly predict presence, which creates estimation issues in logistic models. This can be pretty common in ecto contexts. Much of the time you'll have a suite of environmental variables controlling reproduction, a suite controlling likelihood of detection (microclimate/weather during sampling), and a suite of variables controlling survival throughout the questing season. The problem is you now have one type of response data you collected and three suites of important and likely correlated environmental variables of interest. You can simplify this problem by separating out your model framework into a hurdle form: a presence/absence model where all drags w/o ticks are "0" and any drag with \>0 are labeled present or "1". You then use something like a zero-truncated negative binomial distribution to model the abundance data. Sometimes this type of modeling approach is called process modeling where you develop specific models that are targeting a biological process of interest as explicitly as possible, they are much more common in ecology practices where mechanisms are king and easily publishable and much less common in epi/med ent literature as far as I've been able to tell.
 
 We won't dwell too much on looking at examples of assumption violations in data in this lab, but if you're curious there is some extra code I pulled from Jesse Brunner's github page at the bottom of this lab.
 
->Step 2: Simulate microclimate data
+> Step 2: Simulate microclimate data
 
 Assume temperature and relative humidity were recorded at the visit level (site × date × time of day), not for each individual drag.
 
@@ -178,7 +186,7 @@ head(microclimate)
 
 Here we can take a second to ask ourselves:Are temperature and RH independent? Should they be? What parts of tick biology are temperature and relative humidity measured at sampling affecting? What issues might we have if we assume independence between these variables erroneously?
 
->Step 3: Merge datasets (and check!)
+> Step 3: Merge datasets (and check!)
 
 ```{r}
 tick_drag <- merge(tick_drag, microclimate,
@@ -199,7 +207,7 @@ Before moving on, convince yourself that:
 
 If you don’t check this now, you will regret it later.
 
->Step 4: Simulate missing data (because reality)
+> Step 4: Simulate missing data (because reality)
 
 Field data are never complete. We will simulate two common issues:
 
@@ -227,11 +235,13 @@ size = round(0.02 * nrow(tick_drag)))
 tick_drag$ticks_count <- NA
 
 ```
+
 We will fill ticks_count next—but note how easy it is to create missingness, and how hard it is to deal with later.
 
->Step 5: Simulate tick counts
+> Step 5: Simulate tick counts
 
 Tick counts are noisy. Even under identical conditions, counts vary wildly. Here I'm simulating some pretty complicated tick "populations"
+
 ```{r}
 
 set.seed(1) #this just makes it so when y'all run this code any randomly chosen number from a distribution will be the same number
@@ -337,6 +347,7 @@ mean(tick_drag$ticks_count == 0, na.rm = TRUE)
 #great! We have simulated some tick data that looks like what we think would be plausible in real life, next we'll take a quick look at the distribution of counts and the general spread of our data
 
 ```
+
 ```{r}
 #Below is an example of sampling draws from our population of ticks. 
 
@@ -371,8 +382,8 @@ legend("topright",
        lty = c(1, NA), pch = c(NA, 16), bty = "n")
 #Each sample is a snap-shot of what the population is actually doing at this time, hence why our sampling design and statistical approaches need to align with what we expect the population distribution to look like. 
 ```
-Data simulation is powerful and useful, especially early on in the PhD/pre-experiment phases of research! If you want to know more about the different ways we can simulate data in R, create different distributions, and generally mess around with probabilities just let me know! For many of these labs I'll probably simulate some data for y'all, you can take a peak under the hood at what is going on if you want but don't feel like you need to!
->Step 6: Save, reload, and inspect
+
+Data simulation is powerful and useful, especially early on in the PhD/pre-experiment phases of research! If you want to know more about the different ways we can simulate data in R, create different distributions, and generally mess around with probabilities just let me know! For many of these labs I'll probably simulate some data for y'all, you can take a peak under the hood at what is going on if you want but don't feel like you need to! \>Step 6: Save, reload, and inspect
 
 ```{r}
 write.csv(tick_drag, "tick_drag_sim.csv", row.names = FALSE) #saves your simulated data as a csv
@@ -397,17 +408,35 @@ Answer briefly in text:
 
 -Which variables should be factors?
 
+site, tod, drag_id, transect, and probably site_band
+
 -Is date actually a Date?
 
+nope
+
 -Where are the missing values?
+
+in temp_C and rh_pct (and as a result, favorability) at a few select sampling events, as well as in ticks_count at some interspersed observations
 
 Then fix the variable types in code below.
 
 ```{r}
-#INSERT CODE HERE
+
+#convert char variables into factor
+tick_drag$site <- as.factor(tick_drag$site)
+tick_drag$tod <- as.factor(tick_drag$tod)
+tick_drag$drag_id <- as.factor(tick_drag$drag_id)
+tick_drag$site_band <- as.factor(tick_drag$site_band)
+
+#convert date var into type date
+tick_drag$date <- as.Date(tick_drag$date)
+
+#remove NAs from frame
+tick_drag <- na.omit(tick_drag)
+
 ```
 
->Step 7: Look at your data before modeling
+> Step 7: Look at your data before modeling
 
 If you do not visualize your data, you do not understand your data.
 
@@ -420,8 +449,6 @@ main = "Distribution of tick counts",
 xlab = "ticks_count")
 #you can see the classic form of tick drag data: overdispersed (variance appears to be much higher than the mean) if you are interested about actually testing for overdispersion, take a look at the optional code at the bottom of this r markdown
 ```
-
-
 
 Or, if you prefer ggplot:
 
@@ -443,7 +470,11 @@ geom_point()
 Now, on your own, try to facet by site or time of day:
 
 ```{r}
-# INSERT FACETING CODE HERE
+
+ggplot(tick_drag,
+aes(x = site, y = ticks_count)) +
+geom_point()
+
 ```
 
 Ask yourself:
@@ -456,7 +487,7 @@ Ask yourself:
 
 These questions are straight out of ROS Chapter 1.
 
->Step 8: Transformations (and why they matter)
+> Step 8: Transformations (and why they matter)
 
 Tick counts are skewed. Create a transformed version:
 
@@ -484,7 +515,9 @@ In 3–4 sentences, explain:
 
 -Can you think of any issues with using or interpreting these transformed data?
 
->Step 9: Vapor pressure deficit and functions
+Transforming the variable helps correct for nonlinearity inherent in the collection or relationships between variables. With count data, this helps correct for an issue where data are naturally heteroscedastic, increasing in variability as the 'count' increases. Count data also tend to appear exponential, so taking the log of the observation can help the data fit a linear model better. This does NOT solve the issue of zero-inflation, and forcing count data to appear linear while interpreting it through an lm will impact the slope coefficient unless zeroes are excluded.
+
+> Step 9: Vapor pressure deficit and functions
 
 Relative humidity is not always the best representation of drying stress. Vapor pressure deficit (VPD) often does better and you'll see VPD used in a bunch of ecto literature.
 
@@ -511,41 +544,47 @@ es - ea #returns VPD in kPa
 vpd(25, 80) # test, should be 0.63356
 ```
 
-Features of a good function include:
--Easy to read (multiple lines)
--well-commented
--defines relevant units (like temperature and RH)
-Now apply it to your data and plot tick counts vs VPD.
+Features of a good function include: -Easy to read (multiple lines) -well-commented -defines relevant units (like temperature and RH) Now apply it to your data and plot tick counts vs VPD.
 
 ```{r}
-# INSERT VPD CODE HERE
+
+tick_drag$vpd <- vpd(temp_C = tick_drag$temp_C,rh_pct = tick_drag$rh_pct)
+
+plot(tick_drag$vpd, tick_drag$ticks_count)
+
 ```
 
-Final reflection 
+Final reflection
 
 Answer the following in complete sentences.
 
-1. Give one example from this lab of each ROS challenge:
+1.  Give one example from this lab of each ROS challenge:
 
 -Sample → population
++ Tick drags in a given area may not be representative of the broader locations we want to predict
 
 -Treatment → control
++ Changes in environmental variables do not necessarily encompass the most impactful predictors of tick activity
 
 -Measurement → construct
++ Likelihood of ticks attaching to a drag may not be truly indicative of their abundance or their propensity to attach to a preferred host.
 
-2. Which regression goal fits this system best right now?
+2.  Which regression goal fits this system best right now?
 
--Prediction
+-Prediction ( )
 
--Exploring associations
+-**Exploring associations (X)**
 
--Extrapolation
+-Extrapolation ( )
 
--Causal inference
+-Causal inference ( )
 
-3. What is one assumption you are least comfortable with in this dataset, and why?
+3.  What is one assumption you are least comfortable with in this dataset, and why?
+
+-The assumption of "relationship between x and y" is what I'm least comfortable with at this stage. As far as exploration goes, I have trouble spotting more complex relationships and determining transformations to run.
 
 Optional overdispersion check code below
+
 ```{r}
 #optional look into overdispersion checks
 
@@ -635,7 +674,8 @@ abline(a = 0, b = 1, lty = 2)
 
 Jesse's Brunner's example model assumption code
 
-1) Multicollinearity: correlation + scatterplot matrix
+1)  Multicollinearity: correlation + scatterplot matrix
+
 ```{r}
 # Basic collinearity check for continuous predictors
 vars <- tick_drag[, c("temp_C", "rh_pct", "effort_m")]
@@ -647,7 +687,8 @@ cor(vars)
 pairs(vars, main = "Pairwise plots: temperature, RH, effort")
 #effort is a good example of something that should not (ideally) correlate with temp and RH, but we can see that there is a bit of a linear correlation between temp and rh based on their pairwise cor plots.
 ```
-For multicollinearity I like to use variance inflation factors (VIF) which requires you to fit a model and determine if 
+
+For multicollinearity I like to use variance inflation factors (VIF) which requires you to fit a model and determine if
 
 ```{r}
 if (requireNamespace("car", quietly = TRUE)) {
@@ -658,7 +699,9 @@ if (requireNamespace("car", quietly = TRUE)) {
 }
 #should be around 1, if VIFs are above three then you might have some issues. Thresholds for VIFs are all over the place, I'd recommend finding some papers that report VIFs for the stats you're using and the type of data you have and see what thresholds they use.
 ```
-2) Zero inflation + heavy tails: distribution and fraction of zeros
+
+2)  Zero inflation + heavy tails: distribution and fraction of zeros
+
 ```{r}
 x <- tick_drag$ticks_count
 x <- x[!is.na(x)]
@@ -676,6 +719,7 @@ hist(log1p(x), breaks = 50,
      xlab = "log1p(ticks_count)")
 #no surprise here, we have data with lots of zeros and long tails.
 ```
+
 A simple “by site” view often makes clumping obvious:
 
 ```{r}
@@ -684,7 +728,8 @@ boxplot(ticks_count ~ site, data = tick_drag,
         ylab = "ticks_count")
 #your typical box plot gives your quartile ranges, note our long "tails" of extreme values well above most of our other points and differences in the severity of this issue across our sites (Site A and Site C have more extreme points than sites B and D). This site-level difference in variation has some strong implications for the types of assumptions we can make around data aggregation and consistent variances.
 ```
-3) Overdispersion: mean–variance plot by groups
+
+3)  Overdispersion: mean–variance plot by groups
 
 Poisson implies Var ≈ Mean (within comparable conditions). This plot doesn’t prove overdispersion, but it makes it hard to ignore.
 
@@ -708,7 +753,8 @@ plot(mv$mean, mv$var,
 abline(a = 0, b = 1, lty = 2)
 #we are so far away from that dashed line it is not even funny!
 ```
-4) Nonlinearity: binned trend line (base R) + smoothing
+
+4)  Nonlinearity: binned trend line (base R) + smoothing
 
 This is a quick way to see if the relationship looks curved without fitting a fancy model.
 
@@ -725,8 +771,8 @@ plot(dat_nl$temp_C, dat_nl$ticks_count,
 lines(lowess(dat_nl$temp_C, log1p(dat_nl$ticks_count)), lwd = 2)
 #like we mentioned before, this relationship looks more curvilinear/quadratic than linear
 ```
-5) Heteroskedasticity + residual structure: simple Poisson GLM residual plots
 
+5)  Heteroskedasticity + residual structure: simple Poisson GLM residual plots
 
 ```{r}
 dat_glm <- subset(
@@ -762,7 +808,9 @@ plot(dat_glm$date, dat_glm$pearson_resid,
 abline(h = 0, lty = 2)
 #lots of clustering but at least we are consistently clustering across time...
 ```
-6) Influence / leverage: “which points are driving the fit?”
+
+6)  Influence / leverage: “which points are driving the fit?”
+
 ```{r}
 infl <- influence.measures(m_pois)
 
