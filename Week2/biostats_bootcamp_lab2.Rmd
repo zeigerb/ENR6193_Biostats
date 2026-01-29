@@ -1,0 +1,198 @@
+---
+title: 'Lab 2: Data Visualization and Making a Good Figure'
+author: "Troy Koser"
+date: "2026-01-06"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: readable
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Packages for this lab
+library(tidyverse)
+library(lubridate)
+
+```
+
+Our goals and rationale
+
+For this lab we'll be talking about ROS Chapter 2 and concepts from Kieran Healy's Data Visualization: A Practical Introduction (https://socviz.co/index.html#what-you-will-learn)
+
+In Lab 1, the point was to develop a workflow for not getting fooled by your own data.
+
+In Lab 2, we build on that. The main idea from Regression and Other Stories (ROS) early on is that statistics is hard largely because we are constantly generalizing: from samples to populations, from observed measurements to the constructs we actually care about, and (often) from messy reality to simplified models. A big part of doing that responsibly is simply looking at your data honestly before you start modeling.
+
+Kieran Healy makes the same point more bluntly: look at your data—then look again—because many problems show up immediately once you plot things well. 
+
+So, the goals for this lab are to:
+
+*Download and load a real disease ecology dataset from a published paper.*
+
+*Do basic data inspection (types, missingness, plausible ranges).*
+
+*Identify a “less-than-stellar” plotting approach (we’ll intentionally make one).*
+
+*Redesign the plot using better principles from ROS Ch. 2 and Healy’s recommendations.*
+
+*Write a short justification of your design choices.*
+
+Example system: tick-borne disease ecology (quick context)
+
+Ticks are vectors for a number of pathogens (e.g., Borrelia burgdorferi causing Lyme disease). In many field studies, researchers collect ticks using standardized sampling (like dragging cloth across vegetation) and then summarize tick abundance, infection prevalence, and environmental conditions to estimate risk.
+
+Most ectoparasite count datasets are messy: lots of zeros, occasional big counts, and strong spatial structure. That means your plots need to show distributions and uncertainty—not just averages.
+
+The dataset (published paper + open data)
+
+We will use publicly archived data from a published study on tick-borne disease risk in a forest food web, hosted on Dryad. 
+datadryad.org
+
+Important: Download links sometimes change. The code below tries a couple of common approaches. If it fails, the “Plan B” is simple: download the dataset zip from the Dryad landing page in your browser and put it into the data/ folder.
+
+*Step 1: Create a project folder structure*
+
+In your R project, create:
+
+data/ (for raw downloads)
+
+output/ (for figures)
+
+You can do it in R:
+
+```{r}
+dir.create("data", showWarnings = FALSE)
+dir.create("output", showWarnings = FALSE)
+```
+
+*Step 2: Load in data*
+From the README/metadata file for this dataset:
+"Dataset used in:
+Ostfeld, R. S., T. Levi, F. Keesing, K. Oggenfuss, and C. D. Canham. 2018. Tick-borne disease risk in a forest food web. Ecology, in press.
+The dataset was compiled from component datasets on (1) climate at the Cary Institute weather station (1988 – 2016); (2) estimates of deer density from the Cary Institute deer management program (1992 – 2015); (3) seed rain at the 6 study sites within the Cary Forest (1992 – 2016); (4) small mammal trapping data at the 6 study sites (1993 – 2015); and (5) data on tick abundance and infection prevalence from the 6 study sites (1991 – 2015)."
+```{r}
+dat<-read.csv("Lyme_Study_Dataset.csv")
+str(dat)
+miss <- sapply(dat, function(x) mean(is.na(x))) %>% #check for missingness
+sort(decreasing = TRUE)
+
+miss
+```
+
+Wow that is a lot of missing data, let's look into what is missing here and structure our data visualizations around ~complete observation sets
+
+```{r}
+
+miss_df <- data.frame(
+  variable = names(miss),
+  prop_missing = as.numeric(miss)
+)
+
+head(miss_df, 15)
+
+ggplot(miss_df, aes(x = reorder(variable, prop_missing), y = prop_missing)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    x = NULL,
+    y = "Percent missing",
+    title = "Missingness by variable",
+    subtitle = "Heavily-missing variables may not be usable without careful justification"
+  ) +
+  theme_bw()
+```
+So this makes a bit more sense; we only have PCR results for positive ticks. This dataset also has a time-lagged dataset, meaning the authors needed rows of environmental data from a year or two before tick collection at their grids because they are relating those variables to the environmental conditions experienced by ticks before they were collected. This makes their missing data make a lot more sense and helps us figure out what figures might be useful.
+
+## Create an analyzable subset
+
+For any figure we make, we need to know *which rows are included*.  
+Here we will work with rows where the response is observed.
+
+```{r}
+response_var <- "DON"   # we'll start with DON or density of nymphs because this is commonly used in Lyme datasets, its a % value between 0 and 1.
+
+dat_plot <- dat %>%
+  filter(!is.na(.data[[response_var]])) %>%
+  mutate(
+    Year = as.integer(Year),
+    Grid = factor(Grid)
+  )
+
+nrow(dat_plot)
+summary(dat_plot[[response_var]])
+```
+Let's make a "bad" plot
+
+## Step: A not-great plot (bars of means)
+
+This plot is common in papers: it hides the data distribution and can imply certainty that isn’t there.
+
+```{r}
+bad_summary <- dat_plot %>%
+  group_by(Year) %>%
+  summarise(
+    mean_y = mean(.data[[response_var]], na.rm = TRUE),
+    se_y = sd(.data[[response_var]], na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(bad_summary, aes(x = Year, y = mean_y)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = mean_y - se_y, ymax = mean_y + se_y), width = 0.2) +
+  labs(
+    x = "Year",
+    y = paste0("Mean ", response_var, " (± SE)"),
+    title = "Not great: annual means hide grid-level variation"
+  ) +
+  theme_bw()
+```
+Let's try to relay this data a bit more honestly
+
+## Step: Better plot (show the data)
+
+```{r}
+ggplot(dat_plot, aes(x = Year, y = .data[[response_var]])) +
+  geom_point(aes(shape = Grid), alpha = 0.6) +
+  geom_smooth(method = "loess", se = TRUE) +
+  labs(
+    x = "Year",
+    y = response_var,
+    title = "Better: show the raw observations and a trend",
+    subtitle = "Points = grid-years; smooth summarizes pattern without hiding variation"
+  ) +
+  theme_bw()
+```
+Raw data can be great for giving folks an idea of how much work you put into collecting a robust sample size, show them where gaps may be, and generally give the reader a sense of what concrete numbers you're looking at. I LOVE having raw data points in a model figure even if they are set with a transparency/alpha to make them more of a background feature. You could really run away with this plot and use diffent symbols or colors to denote sites, create a real modeled fitted line vs a Loess smoother, etc. but the main point is that means can often simplify the coolest part of your data ESPECIALLY if you think the population you're working with doesnt have a normal distribution (what the typical mean number is a decent representation of)
+## Better plot (facets respect structure)
+
+```{r}
+ggplot(dat_plot, aes(x = Year, y = .data[[response_var]])) +
+  geom_point(alpha = 0.7) +
+  geom_line(alpha = 0.5) +
+  facet_wrap(~ Grid, scales = "free_y") +
+  labs(
+    x = "Year",
+    y = response_var,
+    title = "Better: small multiples by grid",
+    subtitle = "Facets reveal heterogeneity that averages obscure"
+  ) +
+  theme_bw()
+```
+What is another plot that could be an interesting way to display these data? Are any transformations useful here? Mess around with ggplot and this dataset in the code chunk below. Please pick a new variable to investigate (ex. deer_tminus1, Ave.Deer.Hr for the grid/year combination for the previous year, Average # deer / hour of observation one year prior) and have fun making a ggplot with facets, colors, etc. using what you learned from ROS Chapter 2 and the Data Visualization website!
+
+```{r}
+
+```
+
+

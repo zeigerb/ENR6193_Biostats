@@ -1,0 +1,780 @@
+---
+title: 'Lab 1: Tick Drags, Data Gremlins, and Why Statistics Is Hard'
+author: "Troy Koser"
+date: "2026-01-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE,
+  message = FALSE)
+```
+
+## Our goals and rationale
+
+Much of our work in this class will involve **data**—sometimes data we collected ourselves, sometimes data collected by others, and sometimes data we simulated on purpose. Regardless of where it comes from, the same problem always arises:
+
+> The data we have are almost never the data we *wish* we had.
+
+This is exactly the point made in **Chapter 1 of _Regression and Other Stories_ (ROS)**. Statistics is not just about fitting models; it is about **generalizing**, and generalization is difficult for three reasons:
+
+1. We want to generalize from a **sample to a population**  
+2. We want to generalize from **treatments to controls**  
+3. We want to generalize from **measurements to underlying constructs**
+
+In disease ecology, these problems show up all the time. Tick drags, chigger plate counts, and fly sweeps are all examples of samples, not populations. Tick counts are imperfect proxies for host encounter and exposure risk. Count data and the environmental variables collected with these types of samples are often noisy and incomplete. And yet, we still want to learn something from these data and do our best to acknowledge key limitations and assumptions.
+
+The goal of this lab is *not* to fit a regression model. Instead, the goal is to develop good habits for:
+
+- Knowing what data you actually have  
+- Visualizing patterns before modeling  
+- Transforming variables carefully and transparently  
+- Being explicit about assumptions  
+- Writing simple, readable functions  
+
+If you skip these steps, no statistical model—Bayesian or otherwise—will save you later. If you feel comfortable with these ideas already, then I suggest jumping into the Statistical Rethinking exercises!
+
+---
+
+> A note on workflow (important)
+
+All labs in this independent study will be completed as **R markdown documents** (`.rmd` files, knitted to html or pdf files). These combine:
+
+- Text explaining what you are doing and why  
+- Code that does the work  
+- Output (tables, plots, summaries)
+
+R markdown files are my favorite way to talk about code and work through problems together! You should think of this file as both your **lab notebook** and your **analysis script**.
+
+Render often. Save often. 
+
+---
+
+> Setup
+
+We will mostly use **base R** in this course, because that is what ROS uses heavily. You are welcome to use `ggplot2` for plotting if you prefer.
+
+```{r}
+# Optional plotting package
+library(ggplot2)
+
+# For reproducibility
+set.seed(101)
+```
+
+>Example system: simulated tick drag data
+
+Rather than jumping straight into real data, we are going to simulate a tick drag dataset. This is deliberate. When you simulate data, you are forced to confront assumptions explicitly—something both ROS and Statistical Rethinking recommend.
+
+<div class="tick-callout">
+
+#### What is a tick drag (for those who may not be aware)?
+
+A *tick drag* is a common field method used to sample host-seeking (or “questing”) ticks from the environment. In a typical tick drag, a square or rectangular piece of white cloth (often flannel or corduroy), typically 1m x 1m, is attached to a pole and slowly dragged across vegetation, leaf litter, or over other appropriate substrate depending on tick species of interest for a fixed distance or time. Ticks that are actively questing for a host latch onto the cloth and are then removed at regular intervals.
+
+Because many medically important tick species spend part of their life cycle waiting for or seeking a host in the environment, tick drags provide a practical way to estimate **relative tick abundance** in a given place and time. As a result, tick drag data are often used as a proxy for **tick-borne disease risk**s.
+
+**What data are typically collected?**
+
+Tick drag datasets often include tick counts per drag or per unit distance, along with information on site, date, and time of sampling. Many studies also record tick species and life stage, sampling effort, habitat characteristics, and local environmental conditions such as temperature and relative humidity. Importantly, tick drag counts and associated pathogen information are *proxies* of population characteristics, not comprehensive measurements of true tick density or infection risk. Recognizing this distinction between what we measure and what we ultimately care about is a recurring theme in this ind. study and directly relates to the challenges of statistical inference discussed in Chapter 1 of Regression and Other Stories.
+
+</div>
+
+Before touching any code, pause for a moment and think (Type in your musings below each question):
+
+What does a single “tick drag observation” represent?
+
+Why might two drags on the same day give different counts?
+
+What environmental variables matter, and how imperfectly are they measured?
+
+You don’t need perfect answers, but you do need to be thinking about these questions every time you open up a new dataset!.
+
+>Step 1: Simulate the sampling design
+
+We will assume:
+
+4 sites
+
+~3 weeks of sampling during presumed peak activity season for this life stage/species
+
+Morning and afternoon visits
+
+Multiple drags per visit
+
+```{r}
+n_sites <- 4
+sites <- paste0("Site_", LETTERS[1:n_sites]) #here we are just labeling a vector object of sites as "Site_1, Site_2...etc"
+
+n_days <- 21 #number of sampling days
+start_day <- as.Date("2025-05-15") #creating a start date as a date object
+days <- start_day + 0:(n_days - 1) #Creating a vector of days starting at May 15th 2025 all the way up to 20 days later
+
+times_of_day <- c("AM", "PM") 
+drags_per_visit <- 6
+
+tick_drag <- expand.grid( #merging all of our simulated data vectors into a dataframe
+site = sites,
+date = days,
+tod  = times_of_day,
+drag_id = seq_len(drags_per_visit)
+)
+
+tick_drag$transect <- sample(c("T1", "T2"), 
+size = nrow(tick_drag),
+replace = TRUE)
+
+tick_drag$effort_m <- round(rnorm(nrow(tick_drag), mean = 100, sd = 5)) #we'll assume we aimed at 100m drags and add some error in here for GPS unit wobbling
+
+head(tick_drag)
+
+```
+At this point, every row represents one drag. That is already a decision that affects our modeling approaches, if we aggregated by site we could ask questions about site-level differences in tick counts, but before we start aggregating data to scales we find interesting it is important to visually check your data for characteristics that will let you know if aggregation is appropriate. Hierarchical/nested models or non-parametric tests are great ways of looking for patterns in aggregated data while accounting for issues like dramatically different variances between groups (often an issue in ectoparasite count data sets). It is always important to check the assumptions for your potential approaches before you start changing things like spatial or temporal scale for your data (clumping by site or year for example). Some common data properties to look out for are:
+
+-Multicollinearity: predictors that are strongly correlated with each other (e.g., temperature and RH), which can destabilize coefficient estimates and make “effects” hard to interpret.
+
+-Zero inflation and heavy tails: many zeros and a few very large counts (common in tick drags), which often breaks the brain of Gaussian models and can stress even simple Poisson count models. Hence why you'll see some statisticians shouting on the internet about always using negative binomial distributions for count data.
+
+-Overdispersion: variance greatly exceeding the mean in count data, which leads Poisson models to underestimate uncertainty.
+
+-Nonlinearity: relationships that are curved, threshold-like, or otherwise not well approximated by a straight line on the scale you are modeling. Classic example here comes from Erin Mordecai's malaria mosquito/thermal threshold work, basically saying that ectoparasites don't simply have a minimum and maximum tolerable temperature, but a performance and reproduction fitness curve along a spectrum of temperatures which will have a clear maximum. When examining relationships between ectos and environmental variables it is often recommended to check for quadratic (^2) terms and some folks even argue to leave those in models even if fitting/selection processes recommend them to be removed because they are biologically plausible.
+
+-Heteroskedasticity: residual variance that changes with fitted values or environmental conditions (often worse at high expected abundance).
+
+-Dependence / autocorrelation: repeated sampling through time (or nearby space) can create correlations that violate independence assumptions and make standard errors too optimistic. Do you think this would be a problem for our current data as structured if we were to, say, run a neg binomial glm including all sampling dates and times?
+
+-Influential points and leverage: a few high-count events or unusual environmental observations can dominate model fits and conclusions.
+
+-Separation-like behavior (for binary outcomes): if we later convert to presence/absence, some combinations of predictors may perfectly predict presence, which creates estimation issues in logistic models. This can be pretty common in ecto contexts. Much of the time you'll have a suite of environmental variables controlling reproduction, a suite controlling likelihood of detection (microclimate/weather during sampling), and a suite of variables controlling survival throughout the questing season. The problem is you now have one type of response data you collected and three suites of important and likely correlated environmental variables of interest. You can simplify this problem by separating out your model framework into a hurdle form: a presence/absence model where all drags w/o ticks are "0" and any drag with >0 are labeled present or "1". You then use something like a zero-truncated negative binomial distribution to model the abundance data. Sometimes this type of modeling approach is called process modeling where you develop specific models that are targeting a biological process of interest as explicitly as possible, they are much more common in ecology practices where mechanisms are king and easily publishable and much less common in epi/med ent literature as far as I've been able to tell.
+
+We won't dwell too much on looking at examples of assumption violations in data in this lab, but if you're curious there is some extra code I pulled from Jesse Brunner's github page at the bottom of this lab.
+
+>Step 2: Simulate microclimate data
+
+Assume temperature and relative humidity were recorded at the visit level (site × date × time of day), not for each individual drag.
+
+```{r}
+microclimate <- unique(tick_drag[, c("site", "date", "tod")])
+
+day_index <- as.numeric(microclimate$date - min(microclimate$date))
+
+microclimate$temp_C <- 18 +
+0.25 * day_index + #temperature should generally increase along sampling variables
+ifelse(microclimate$tod == "PM", 3, 0) +
+rnorm(nrow(microclimate), 0, 1.2) #adding some variation in temperature
+
+microclimate$rh_pct <- pmin(
+100,
+pmax(
+30,
+85 - 1.2 * (microclimate$temp_C - 18) +
+rnorm(nrow(microclimate), 0, 6)
+)
+)
+
+head(microclimate)
+
+```
+
+Here we can take a second to ask ourselves:Are temperature and RH independent? Should they be? What parts of tick biology are temperature and relative humidity measured at sampling affecting? What issues might we have if we assume independence between these variables erroneously?
+
+>Step 3: Merge datasets (and check!)
+
+```{r}
+tick_drag <- merge(tick_drag, microclimate,
+by = c("site", "date", "tod"),
+all.x = TRUE)
+
+head(tick_drag)
+
+```
+
+Before moving on, convince yourself that:
+
+-The merge worked
+
+-Every drag has the correct temperature and RH
+
+-No rows were silently duplicated or dropped
+
+If you don’t check this now, you will regret it later.
+
+>Step 4: Simulate missing data (because reality)
+
+Field data are never complete. We will simulate two common issues:
+
+-Microclimate logger failures
+
+-Missing tick counts
+
+```{r}
+lost_rows <- sample(seq_len(nrow(microclimate)), size = 6)
+lost_keys <- microclimate[lost_rows, c("site", "date", "tod")]
+
+lost_flag <- paste(tick_drag$site,
+tick_drag$date,
+tick_drag$tod) %in%
+paste(lost_keys$site,
+lost_keys$date,
+lost_keys$tod)
+
+tick_drag$temp_C[lost_flag] <- NA
+tick_drag$rh_pct[lost_flag] <- NA
+
+miss_ticks <- sample(seq_len(nrow(tick_drag)),
+size = round(0.02 * nrow(tick_drag)))
+
+tick_drag$ticks_count <- NA
+
+```
+We will fill ticks_count next—but note how easy it is to create missingness, and how hard it is to deal with later.
+
+>Step 5: Simulate tick counts
+
+Tick counts are noisy. Even under identical conditions, counts vary wildly. Here I'm simulating some pretty complicated tick "populations"
+```{r}
+
+set.seed(1) #this just makes it so when y'all run this code any randomly chosen number from a distribution will be the same number
+
+# Make sure site is treated as a factor (important for grouping)
+tick_drag$site <- factor(tick_drag$site)
+
+favorable <- function(temp_C, rh_pct){ #don't pay too much attention to this now, but this function will generally make our simulated tick count data conform to the hypothesis that there is some favourability in the tick count data along our environmental variables. A common modeling approach that uses this kind of framework would be mechanistic model predicting real count data where you include favourability and remove it to see what happens
+ifelse(is.na(temp_C) | is.na(rh_pct),
+NA, #if temp or RH is NA, we assume we did not collect ticks at that time (incomplete data)
+exp(-0.03*(temp_C - 22)^2 - #if we have ticks, then we are going to assume we get the most ticks at ~22C and 80%RH and fewer away from those maxima
+0.0015*(rh_pct - 80)^2))
+}
+
+tick_drag$favorability <- favorable(tick_drag$temp_C, #apply the function to our dataframe
+tick_drag$rh_pct)
+
+# -------------------------
+# 1) Create "bands" of sites
+# -------------------------
+# We will randomly assign ~40% of sites to be "higher tick" sites.
+sites <- levels(tick_drag$site)
+n_sites <- length(sites)
+
+high_sites <- sample(sites, size = round(0.4 * n_sites), replace = FALSE)
+tick_drag$site_band <- ifelse(tick_drag$site %in% high_sites, "high", "low")
+tick_drag$site_band <- factor(tick_drag$site_band, levels = c("low", "high"))
+
+# Site-specific random effect (adds extra heterogeneity among sites)
+site_re <- rnorm(n_sites, mean = 0, sd = 0.35)
+names(site_re) <- sites
+tick_drag$site_re <- site_re[as.character(tick_drag$site)]
+
+# ---------------------------------------
+# 2) Zero-inflation
+# ---------------------------------------
+# This is a simple model for the probability of observing *any* ticks.
+# Interpretation: even at a "good" site, many drags come up empty.
+# We make ticks more likely when favorability is higher and (slightly) in AM.
+lp_nonzero <- -0.8 +
+  2.5 * tick_drag$favorability +     # more favorable -> higher chance of non-zero
+  0.3 * (tick_drag$tod == "AM") +    # minor AM effect
+  0.2 * (tick_drag$site_band == "high")
+
+p_nonzero <- plogis(lp_nonzero)      # convert to probability (0–1)
+is_nonzero <- rbinom(nrow(tick_drag), size = 1, prob = p_nonzero)
+
+# -------------------------------------------------------
+# 3) Conditional mean counts (given non-zero observation)
+# -------------------------------------------------------
+# Baseline differences between the two site bands:
+# - low band targets ~1–5 ticks on non-zero drags
+# - high band targets ~15–20 ticks on non-zero drags
+#
+# We build this on the log scale (common in count models).
+linpred <- 1.2 +                                 # baseline for low sites
+  1.6 * (tick_drag$site_band == "high") +        # bump high sites upward
+  1.2 * tick_drag$favorability +                 # more favorable -> more ticks
+  0.2 * (tick_drag$tod == "AM") +                # minor AM effect
+  0.004 * (tick_drag$effort_m - 100) +           # more effort -> more ticks
+  tick_drag$site_re                               # site-level random effect
+
+mu <- exp(linpred)
+
+# ---------------------------------------------------------
+# 4) Occasional "hot spot" multiplier to reach ~200 counts
+# ---------------------------------------------------------
+# A small probability of a big bump in counts under favorable conditions.
+# This is a simple way to mimic patchy larval clusters or localized “boom” events.
+hotspot_prob <- 0.03 * tick_drag$favorability     # more likely when favorable
+hotspot <- rbinom(nrow(tick_drag), size = 1, prob = pmin(hotspot_prob, 0.08))
+
+# Multiply mean by 3–6x when hotspot occurs
+hotspot_mult <- ifelse(hotspot == 1, runif(nrow(tick_drag), 3, 6), 1)
+mu2 <- mu * hotspot_mult
+
+# ---------------------------------------------
+# 5) Simulate counts with higher variability
+# ---------------------------------------------
+# Smaller size -> more overdispersion -> heavier right tail.
+size_nb <- 0.6
+
+tick_drag$ticks_count <- rnbinom(
+  nrow(tick_drag),
+  mu = mu2,
+  size = size_nb
+)
+
+# Apply the zero-inflation gate
+tick_drag$ticks_count[is_nonzero == 0] <- 0
+
+# Re-insert missing values where you intentionally created missing tick counts
+tick_drag$ticks_count[miss_ticks] <- NA
+
+# Quick checks
+summary(tick_drag$ticks_count)
+tapply(tick_drag$ticks_count, tick_drag$site_band, summary, na.rm = TRUE)
+
+# Optional: check max and proportion of zeros
+max(tick_drag$ticks_count, na.rm = TRUE)
+mean(tick_drag$ticks_count == 0, na.rm = TRUE)
+
+#great! We have simulated some tick data that looks like what we think would be plausible in real life, next we'll take a quick look at the distribution of counts and the general spread of our data
+
+```
+```{r}
+#Below is an example of sampling draws from our population of ticks. 
+
+
+# For example, a typical low-band mean (median-ish mu among low sites)
+mu_demo <- median(mu2[tick_drag$site_band == "low"], na.rm = TRUE)
+
+# Use the same dispersion you used in the simulation
+size_demo <- size_nb
+
+# Define a reasonable tick-count range for plotting the distribution
+x <- 0:200
+
+# The "population" distribution implied by our model for this scenario
+p_pop <- dnbinom(x, mu = mu_demo, size = size_demo)
+
+# Take repeated "samples" from this population (each draw = one hypothetical drag)
+n_draws <- 200
+draws <- rnbinom(n_draws, mu = mu_demo, size = size_demo)
+
+# Plot the population distribution
+plot(x, p_pop, type = "h",
+     xlab = "Tick count",
+     ylab = "Probability (population model)",
+     main = "A model-based population distribution and sample draws")
+
+# Overlay sample draws as points along the x-axis
+points(draws, rep(0, length(draws)), pch = 16, cex = 0.6)
+
+legend("topright",
+       legend = c("Population model (NB pmf)", "Sample draws (each drag)"),
+       lty = c(1, NA), pch = c(NA, 16), bty = "n")
+#Each sample is a snap-shot of what the population is actually doing at this time, hence why our sampling design and statistical approaches need to align with what we expect the population distribution to look like. 
+```
+Data simulation is powerful and useful, especially early on in the PhD/pre-experiment phases of research! If you want to know more about the different ways we can simulate data in R, create different distributions, and generally mess around with probabilities just let me know! For many of these labs I'll probably simulate some data for y'all, you can take a peak under the hood at what is going on if you want but don't feel like you need to!
+>Step 6: Save, reload, and inspect
+
+```{r}
+write.csv(tick_drag, "tick_drag_sim.csv", row.names = FALSE) #saves your simulated data as a csv
+
+tick_drag <- read.csv("tick_drag_sim.csv") #brings back in that csv
+
+```
+
+Now, do the boring but essential work:
+
+```{r}
+head(tick_drag)
+tail(tick_drag)
+summary(tick_drag)
+str(tick_drag)
+
+```
+
+Your task
+
+Answer briefly in text:
+
+-Which variables should be factors?
+
+-Is date actually a Date?
+
+-Where are the missing values?
+
+Then fix the variable types in code below.
+
+```{r}
+#INSERT CODE HERE
+```
+
+>Step 7: Look at your data before modeling
+
+If you do not visualize your data, you do not understand your data.
+
+Tick count distribution
+
+```{r}
+hist(tick_drag$ticks_count,
+breaks = 30,
+main = "Distribution of tick counts",
+xlab = "ticks_count")
+#you can see the classic form of tick drag data: overdispersed (variance appears to be much higher than the mean) if you are interested about actually testing for overdispersion, take a look at the optional code at the bottom of this r markdown
+```
+
+
+
+Or, if you prefer ggplot:
+
+```{r}
+ggplot(tick_drag, aes(x = ticks_count)) +
+geom_histogram(bins = 30)
+
+```
+
+Tick counts vs environment
+
+```{r}
+ggplot(tick_drag,
+aes(x = temp_C, y = ticks_count)) +
+geom_point()
+#You can start to see a pattern here where we have 1) lots of zeros all along the gradient of our environmental variable and an interesting slight curve where tick counts may increase slightly towards ~22C and taper off towards either end of this spectrum. This is biologically what we might expect (if we sampled a population enough)
+```
+
+Now, on your own, try to facet by site or time of day:
+
+```{r}
+# INSERT FACETING CODE HERE
+```
+
+Ask yourself:
+
+-Is this relationship clean or messy?
+
+-Would a straight-line model make sense?
+
+-What is being averaged over implicitly?
+
+These questions are straight out of ROS Chapter 1.
+
+>Step 8: Transformations (and why they matter)
+
+Tick counts are skewed. Create a transformed version:
+
+```{r}
+tick_drag$ticks_log1p <- log(tick_drag$ticks_count + 1)
+
+```
+
+Plot it again against temperature.
+
+```{r}
+ggplot(tick_drag,
+aes(x = temp_C, y = ticks_log1p)) +
+geom_point()
+#we can see that logging our variable turns the data into essentially a banded point cloud; this makes sense because we pulled our simulated data from a log distribution! 
+```
+
+In 3–4 sentences, explain:
+
+-Why would you transform the variable?
+
+-What problem does this helps with?
+
+-What problem(s) does this not solve?
+
+-Can you think of any issues with using or interpreting these transformed data?
+
+>Step 9: Vapor pressure deficit and functions
+
+Relative humidity is not always the best representation of drying stress. Vapor pressure deficit (VPD) often does better and you'll see VPD used in a bunch of ecto literature.
+
+Rather than calculating it repeatedly, we write a function. The arguments of the function are what it will be using, typically these will be variable names from your dataset but in more complicated functions these can be, say, lists of animal GPS collar datasets. Functions are great tools for automating a process over many values, vectors, or dataframes!
+
+```{r}
+#In general, a function is written as:
+name_of_fxn <- function(argument1, argument2, ...){
+  #Stuff to do.
+  return()
+}
+#below is a function to calculate vapor pressure deficit based on temperature and relative humidity
+vpd <- function(temp_C, rh_pct){
+
+#temp_C in degrees C
+#rh_pct in percent
+
+es <- 0.6108 * exp(17.27 * temp_C / #saturation vapor pressure
+(temp_C + 237.3))
+ea <- (rh_pct / 100) * es #actual vapor pressure
+es - ea #returns VPD in kPa
+}
+
+vpd(25, 80) # test, should be 0.63356
+```
+
+Features of a good function include:
+-Easy to read (multiple lines)
+-well-commented
+-defines relevant units (like temperature and RH)
+Now apply it to your data and plot tick counts vs VPD.
+
+```{r}
+# INSERT VPD CODE HERE
+```
+
+Final reflection 
+
+Answer the following in complete sentences.
+
+1. Give one example from this lab of each ROS challenge:
+
+-Sample → population
+
+-Treatment → control
+
+-Measurement → construct
+
+2. Which regression goal fits this system best right now?
+
+-Prediction
+
+-Exploring associations
+
+-Extrapolation
+
+-Causal inference
+
+3. What is one assumption you are least comfortable with in this dataset, and why?
+
+Optional overdispersion check code below
+```{r}
+#optional look into overdispersion checks
+
+# 1) Subset to complete cases for variables used in the model
+dat_od <- subset(
+  tick_drag,
+  !is.na(ticks_count) &
+    !is.na(temp_C) &
+    !is.na(rh_pct) &
+    !is.na(site) &
+    !is.na(tod) &
+    !is.na(effort_m)
+)
+
+# Basic sanity checks
+stopifnot(is.numeric(dat_od$ticks_count))
+stopifnot(all(dat_od$ticks_count >= 0))
+
+# 2) Fit a simple Poisson GLM
+# Include log(effort_m) as an offset so counts are comparable across effort
+m_pois <- glm(
+  ticks_count ~ temp_C + rh_pct + tod + site + offset(log(effort_m)),
+  family = poisson(link = "log"),
+  data = dat_od
+)
+
+summary(m_pois)
+
+# 3) Overdispersion diagnostic: residual deviance / residual df
+disp_ratio <- deviance(m_pois) / df.residual(m_pois)
+disp_ratio
+
+# Rule of thumb:
+# - ~1: Poisson variance roughly OK
+# - >>1 (e.g., >1.5–2): likely overdispersion (variance > mean)
+# - <1: underdispersion (less common in ecology count data)
+
+#Looks like we do have a bit of overdispersion! 
+
+# 4) Formal-ish check using a Pearson chi-square statistic
+pearson_chisq <- sum(residuals(m_pois, type = "pearson")^2)
+pearson_ratio <- pearson_chisq / df.residual(m_pois)
+pearson_ratio
+
+# Optional: approximate p-value (large-sample heuristic)
+p_overdisp <- pchisq(pearson_chisq, df = df.residual(m_pois), lower.tail = FALSE)
+p_overdisp
+
+# 5) If overdispersion is present, compare to a Negative Binomial model
+# (This is a practical follow-up model commonly used for overdispersed counts.)
+if (requireNamespace("MASS", quietly = TRUE)) {
+  m_nb <- MASS::glm.nb(
+    ticks_count ~ temp_C + rh_pct + tod + site + offset(log(effort_m)),
+    data = dat_od
+  )
+
+  summary(m_nb)
+
+  # AIC comparison: lower is better (not a proof, but a useful diagnostic)
+  AIC(m_pois, m_nb)
+} else {
+  message("Package 'MASS' not available; skipping Negative Binomial comparison.")
+}
+
+# 6) Quick visual check: mean-variance relationship by grouping
+# If variance greatly exceeds mean across groups, that supports overdispersion.
+by_group <- aggregate(
+  ticks_count ~ site + tod,
+  data = dat_od,
+  FUN = function(x) c(mean = mean(x), var = var(x), n = length(x))
+)
+
+# aggregate() returns a matrix column; unpack it
+by_group$mean <- by_group$ticks_count[, "mean"]
+by_group$var  <- by_group$ticks_count[, "var"]
+by_group$n    <- by_group$ticks_count[, "n"]
+by_group$ticks_count <- NULL
+
+by_group
+
+# Plot variance vs mean (Poisson would expect var ≈ mean)
+plot(by_group$mean, by_group$var,
+     xlab = "Mean ticks (by site × time of day)",
+     ylab = "Variance in ticks (by site × time of day)")
+abline(a = 0, b = 1, lty = 2)
+```
+
+Jesse's Brunner's example model assumption code
+
+1) Multicollinearity: correlation + scatterplot matrix
+```{r}
+# Basic collinearity check for continuous predictors
+vars <- tick_drag[, c("temp_C", "rh_pct", "effort_m")]
+vars <- vars[complete.cases(vars), ]
+
+cor(vars)
+
+# Pairwise scatterplots (base R)
+pairs(vars, main = "Pairwise plots: temperature, RH, effort")
+#effort is a good example of something that should not (ideally) correlate with temp and RH, but we can see that there is a bit of a linear correlation between temp and rh based on their pairwise cor plots.
+```
+For multicollinearity I like to use variance inflation factors (VIF) which requires you to fit a model and determine if 
+
+```{r}
+if (requireNamespace("car", quietly = TRUE)) {
+  m_vif <- lm(ticks_count ~ temp_C +rh_pct + effort_m, data = tick_drag)
+  car::vif(m_vif)
+} else {
+  message("Package 'car' not installed; skipping VIF.")
+}
+#should be around 1, if VIFs are above three then you might have some issues. Thresholds for VIFs are all over the place, I'd recommend finding some papers that report VIFs for the stats you're using and the type of data you have and see what thresholds they use.
+```
+2) Zero inflation + heavy tails: distribution and fraction of zeros
+```{r}
+x <- tick_drag$ticks_count
+x <- x[!is.na(x)]
+
+mean(x == 0)   # fraction of zero counts
+summary(x)
+
+hist(x, breaks = 50,
+     main = "Tick count distribution (often zero-heavy and right-skewed)",
+     xlab = "ticks_count")
+
+# log1p makes the tail easier to see
+hist(log1p(x), breaks = 50,
+     main = "log(1 + ticks_count) distribution",
+     xlab = "log1p(ticks_count)")
+#no surprise here, we have data with lots of zeros and long tails.
+```
+A simple “by site” view often makes clumping obvious:
+
+```{r}
+boxplot(ticks_count ~ site, data = tick_drag,
+        main = "Tick counts by site (watch for zero inflation + extreme values)",
+        ylab = "ticks_count")
+#your typical box plot gives your quartile ranges, note our long "tails" of extreme values well above most of our other points and differences in the severity of this issue across our sites (Site A and Site C have more extreme points than sites B and D). This site-level difference in variation has some strong implications for the types of assumptions we can make around data aggregation and consistent variances.
+```
+3) Overdispersion: mean–variance plot by groups
+
+Poisson implies Var ≈ Mean (within comparable conditions). This plot doesn’t prove overdispersion, but it makes it hard to ignore.
+
+```{r}
+dat_mv <- subset(tick_drag, !is.na(ticks_count) & !is.na(site) & !is.na(tod))
+
+mv <- aggregate(ticks_count ~ site + tod, data = dat_mv,
+                FUN = function(z) c(mean = mean(z), var = var(z), n = length(z)))
+
+mv$mean <- mv$ticks_count[, "mean"]
+mv$var  <- mv$ticks_count[, "var"]
+mv$n    <- mv$ticks_count[, "n"]
+mv$ticks_count <- NULL
+
+mv
+
+plot(mv$mean, mv$var,
+     xlab = "Mean ticks (by site - time of day)",
+     ylab = "Variance in ticks (by site - time of day)",
+     main = "Mean–variance check (Poisson would fall near the dashed line)")
+abline(a = 0, b = 1, lty = 2)
+#we are so far away from that dashed line it is not even funny!
+```
+4) Nonlinearity: binned trend line (base R) + smoothing
+
+This is a quick way to see if the relationship looks curved without fitting a fancy model.
+
+```{r}
+dat_nl <- subset(tick_drag, !is.na(ticks_count) & !is.na(temp_C))
+
+plot(dat_nl$temp_C, dat_nl$ticks_count,
+     pch = 16, cex = 0.6,
+     xlab = "Temperature (C)",
+     ylab = "Tick counts",
+     main = "Ticks vs temperature (watch for nonlinearity)")
+
+# Add a loess smooth on log scale to reduce domination by large counts
+lines(lowess(dat_nl$temp_C, log1p(dat_nl$ticks_count)), lwd = 2)
+#like we mentioned before, this relationship looks more curvilinear/quadratic than linear
+```
+5) Heteroskedasticity + residual structure: simple Poisson GLM residual plots
+
+
+```{r}
+dat_glm <- subset(
+  tick_drag,
+  !is.na(ticks_count) & !is.na(temp_C) & !is.na(rh_pct) &
+    !is.na(site) & !is.na(tod) & !is.na(effort_m)
+)
+
+m_pois <- glm(
+  ticks_count ~ temp_C + rh_pct + tod + site + offset(log(effort_m)),
+  family = poisson(link = "log"),
+  data = dat_glm
+)
+
+# Fitted vs Pearson residuals: look for fan-shapes / structure
+plot(fitted(m_pois), residuals(m_pois, type = "pearson"),
+     pch = 16, cex = 0.6,
+     xlab = "Fitted values",
+     ylab = "Pearson residuals",
+     main = "Residual check: heteroskedasticity / misspecification")
+abline(h = 0, lty = 2)
+
+# Also check residuals over time (dependence / autocorrelation hints)
+dat_glm$pearson_resid <- residuals(m_pois, type = "pearson")
+dat_glm <- dat_glm[order(dat_glm$date), ]
+dat_glm$date<-as.Date(dat_glm$date)
+plot(dat_glm$date, dat_glm$pearson_resid,
+    xlim = c(as.Date("2025-05-15"), as.Date("2025-06-04")),
+     pch = 16, cex = 0.6,
+     xlab = "Date",
+     ylab = "Pearson residuals",
+     main = "Residuals through time (watch for runs / clustering)")
+abline(h = 0, lty = 2)
+#lots of clustering but at least we are consistently clustering across time...
+```
+6) Influence / leverage: “which points are driving the fit?”
+```{r}
+infl <- influence.measures(m_pois)
+
+# Cook's distance is one common summary
+cd <- cooks.distance(m_pois)
+
+plot(cd, type = "h",
+     main = "Cook's distance (large spikes = influential points)",
+     ylab = "Cook's D", xlab = "Observation index")
+abline(h = 4/length(cd), lty = 2) #Cook's distance >4/n is often used as a threshold for an influential point, the gold standard however is to run the model with and without influential points and see if they change relationship directions or effect size magnitudes
+
+# Identify a few most influential rows
+head(order(cd, decreasing = TRUE), 10)
+
+```
