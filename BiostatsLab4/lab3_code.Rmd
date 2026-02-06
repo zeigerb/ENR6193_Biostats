@@ -1,0 +1,441 @@
+---
+title: "Lab 3: Reading the fingerprints of ecological count data"
+author: "Troy Koser"
+date: "2026-02-03"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(fitdistrplus)
+library(MASS)      # glm.nb
+library(glmmTMB)   # mixed models, zero inflation
+library(DHARMa)    # diagnostics
+library(readxl)
+
+set.seed(123)
+theme_set(theme_minimal(base_size = 12))
+
+```
+
+Learning objectives
+
+By the end of this class, you should be able to:
+
+1. Describe what a single row represents in a dataset and how it was collected
+
+2.Identify distributional fingerprints (zeros, skew, mean–variance relationships)
+
+3.Decide whether Poisson, Negative Binomial, zero-inflated, or hierarchical models are plausible
+
+4.Explain how sampling conditions affect abundance indices
+
+5.Recognize when extreme-value covariates can mislead ecological inference
+
+6.Translate data structure → shortlist of analysis methods
+
+##PART I — Simulated tick count data (30 minutes)
+1. Data-collection story 
+
+We sampled adult ticks using drag cloths at three sites, repeatedly through the season and across years.
+
+At each visit, we recorded:
+
+-temp_capture, rh_capture: microclimate at the time of sampling
+
+-tmax_annual, rhmin_annual: remote-sensed annual extremes
+
+-tick_count: number of adult ticks collected
+
+Key idea:
+Observed tick counts = true population × questing probability × sampling conditions
+
+Microclimate controls questing activity, so it affects confidence in the count as an index of abundance.
+2. Simulate repeated-measures tick data
+
+```{r}
+sites <- c("A","B","C")
+years <- c(2024, 2025)
+
+tick_dat <- expand_grid(
+  site = sites,
+  year = years,
+  visit = 1:18
+) %>%
+  mutate(
+    doy = round(scales::rescale(visit, to = c(130, 270))),
+    
+    # Annual extremes (constant within site-year)
+    tmax_annual = rnorm(n(), 33, 2) + if_else(site=="C", 1.5, 0),
+    rhmin_annual = pmax(15, rnorm(n(), 30, 7) - if_else(site=="B", 4, 0))
+  ) %>%
+  group_by(site, year) %>%
+  mutate(
+    tmax_annual = first(tmax_annual),
+    rhmin_annual = first(rhmin_annual)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    temp_capture = rnorm(n(), 22, 5),
+    rh_capture   = pmax(35, rnorm(n(), 70, 10))
+  )
+```
+
+3. Generate tick counts with a questing process
+```{r}
+tick_dat <- tick_dat %>%
+  mutate(
+    # True underlying abundance (site + year signal)
+    log_abundance = 1.2 + 
+      if_else(site=="A", 0.3, 0) +
+      if_else(site=="C", -0.4, 0) +
+      if_else(year==2025, 0.2, 0),
+    
+    # Questing probability depends on capture microclimate
+    questing = plogis(
+      -3 +
+      0.18 * temp_capture -
+      0.04 * rh_capture
+    ),
+    
+    mu = exp(log_abundance) * questing,
+    
+    tick_count = rnbinom(n(), mu = mu, size = 1.1)
+  )
+```
+
+4. First fingerprint: what do the counts look like?
+
+```{r}
+tick_dat %>%
+  ggplot(aes(tick_count)) +
+  geom_histogram(binwidth = 1) +
+  labs(title = "Observed adult tick counts")
+mean(tick_dat$tick_count)
+var(tick_dat$tick_count)
+mean(tick_dat$tick_count == 0)
+```
+
+Discussion time!
+
+Does our mean roughly equal our variance? For count data we'll often, as ecologists, think about the Poisson distribution. The Poisson assumes that variance and our mean are roughly equivalent. Is that the case here? What is greater?
+
+Roughly what proportion of our data is zeros? Generally speaking >50% zeros implies zero-inflation, BUT this does not mean we need to use zero-inflation techniques yet! What kind of zeros we have is important for how we deal with them.
+
+Are all of our data points in this dataset independent spatially and temporally? No, we resampled our sites, so we cannot treat all of these data points like they came from the same population.
+
+Fingerprint points toward: Negative Binomial ± zero inflation ± random effects
+
+5. Distribution fitting (quick check)
+
+```{r}
+fit_pois <- fitdist(tick_dat$tick_count, "pois")
+fit_nb   <- fitdist(tick_dat$tick_count, "nbinom")
+
+fit_pois$aic
+fit_nb$aic
+```
+Why Poisson fails here
+
+Poisson assumes:
+
+-Events occur independently
+
+-Constant rate
+
+-Mean = variance
+
+-No unmodeled heterogeneity
+
+But our tick data have:
+
+-Repeated measures
+
+-Seasonal phenology
+
+-Microclimate-driven availability
+
+-Unobserved site- and visit-level variation
+
+So the Poisson model is being asked to do something ecologically impossible! This makes our job more difficult but also really cool!
+
+
+6. Models with microclimate at capture vs annual extremes
+
+Model A: Capture conditions (mechanistic)
+
+```{r}
+m_micro <- glmmTMB(
+  tick_count ~ temp_capture + rh_capture + (1|site),
+  family = nbinom2(),
+  data = tick_dat
+)
+summary(m_micro)
+```
+
+Model B: Annual extremes (ecological but indirect)
+
+```{r}
+m_extreme <- glmmTMB(
+  tick_count ~ tmax_annual + rhmin_annual + (1|site),
+  family = nbinom2(),
+  data = tick_dat
+)
+summary(m_extreme)
+```
+
+7. Diagnostics & interpretation
+
+```{r}
+simulateResiduals(m_micro, plot = TRUE)
+simulateResiduals(m_extreme, plot = TRUE)
+#Compare this
+plotResiduals(
+  simulateResiduals(m_extreme),
+  tick_dat$tmax_annual
+)
+#to this
+plotResiduals(
+  simulateResiduals(m_micro),
+  tick_dat$temp_capture
+)
+```
+
+Reflection time!
+
+Microclimate explains when ticks are available to be sampled
+
+Annual extremes push models toward boundary values
+
+heteroskedasticity = across group variation (not great for our current model formulation)
+
+Extremes may describe range limits, not local abundance processes
+
+This is why MaxEnt-style and Max likelihood approaches often gravitate toward extremes that are not mechanistically tied to the sampling event.
+
+Let's explore adding a seasonal curve using splines/a GAM approach!
+
+```{r}
+library(splines)  # ns()
+m_micro_season <- glmmTMB(
+  tick_count ~ ns(doy, df = 4) + temp_capture + rh_capture + (1|site),
+  family = nbinom2(),
+  data = tick_dat
+)
+
+summary(m_micro_season)
+
+m_micro_noseason <- glmmTMB(
+  tick_count ~ temp_capture + rh_capture + (1|site),
+  family = nbinom2(),
+  data = tick_dat
+)
+
+AIC(m_micro_noseason, m_micro_season)
+
+new_doy <- tibble(
+  doy = seq(min(tick_dat$doy), max(tick_dat$doy), length.out = 100),
+  temp_capture = mean(tick_dat$temp_capture),
+  rh_capture   = mean(tick_dat$rh_capture),
+  site = tick_dat$site[1]  # pick a reference site for prediction
+)
+
+pred <- predict(m_micro_season, newdata = new_doy, type = "link", se.fit = TRUE)
+
+new_doy <- new_doy %>%
+  mutate(
+    eta = pred$fit,
+    se  = pred$se.fit,
+    mu  = exp(eta),
+    lo  = exp(eta - 1.96 * se),
+    hi  = exp(eta + 1.96 * se)
+  )
+
+ggplot(new_doy, aes(doy, mu)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2) +
+  geom_line() +
+  labs(
+    title = "Seasonal phenology term (ns spline on DOY)",
+    y = "Expected tick count (conditional on mean microclimate)",
+    x = "Day of year (DOY)"
+  )
+
+DHARMa::simulateResiduals(m_micro_season, plot = TRUE)
+```
+
+-DOY captures a latent seasonal process that influences the probability ticks are questing and thus detectable.
+
+-Microclimate-at-capture captures instantaneous availability.
+
+-The spline absorbs broad seasonal swings so that temp_capture and rh_capture aren’t forced to “explain” phenology.
+
+```{r}
+#inside the normal gam package this is what a seasonal spline might look like
+# install.packages("mgcv") if needed
+library(mgcv)
+
+tick_dat <- tick_dat %>%
+  mutate(
+    site = factor(site),
+    doy  = as.numeric(doy)
+  )
+
+summary(tick_dat$doy)
+table(tick_dat$site)
+
+m_gam <- gam(
+  tick_count ~ s(doy, k = 8) + temp_capture + rh_capture + s(site, bs = "re"),
+  family = nb(),
+  data = tick_dat,
+  method = "REML"
+)
+
+summary(m_gam)
+plot(m_gam, pages = 1)
+```
+###################################################################################
+PART II — Ohio River Valley fish data (30 minutes)
+8. Data description (tell students first)
+
+This dataset contains fish survey observations (2010–2025) with:
+
+-Common_Name
+
+-Count
+
+-Weight_kg
+
+-River, County
+
+-Latitude, Longitude
+
+Each row = a species-specific observation at a place and time, not a population census.
+
+9. Load the dataset
+
+```{r}
+fish_dat <- read_excel(
+  "2010-2025-Fish-Population-Data_for-web-1.xlsx"
+)
+
+glimpse(fish_dat)
+head(fish_dat)
+tail(fish_dat)
+summary(fish_dat)
+```
+
+10. Fingerprint #1 — counts by species
+
+```{r}
+fish_dat %>%
+  ggplot(aes(Count)) +
+  geom_histogram(binwidth = 1) +
+  scale_x_log10() +
+  labs(title = "Fish count distribution (log scale)")
+names(fish_dat)
+str(fish_dat$Count)
+summary(fish_dat$Count)
+#some nas that could be numbers treated like characters, lets try to force them to play nice by parsing
+fish_dat <- fish_dat %>%
+  mutate(
+    Count = parse_number(as.character(Count)),
+    Weight_kg = parse_number(as.character(Weight_kg))
+  )
+
+mean(fish_dat$Count, na.rm = TRUE)
+var(fish_dat$Count, na.rm = TRUE)
+#the code below tells you proportionally how many zeros we have
+n_zero <- sum(fish_dat$Count == 0, na.rm = TRUE)
+n_obs  <- sum(!is.na(fish_dat$Count))
+
+n_zero
+n_obs
+n_zero / n_obs
+#only one zero row which is kinda odd for these data, let's take a look
+fish_dat[fish_dat$Count == 0 & !is.na(fish_dat$Count), ]
+#that is likely an error so we can remove it here and have it documented as part of our data cleaning activity
+fish_dat <- fish_dat %>%
+  filter(is.na(Count) | Count != 0)
+```
+
+Do you notice any of the following?
+
+-Extreme right skew
+
+-Many zeros
+
+-Mean ≪ variance
+
+-Multiple species + locations
+
+Immediate red flags: Poisson inappropriate, independence violated
+
+11. Fingerprint #2 — weight vs count
+
+```{r}
+fish_dat %>%
+  ggplot(aes(Count, Weight_kg)) +
+  geom_point(alpha = 0.4) +
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+Interpretation
+
+-Weight often log-normal
+
+-Count and weight encode different ecological processes
+
+-Suggests separate models or joint models
+12. Fingerprint #3 — spatial structure
+```{r}
+fish_dat %>%
+  ggplot(aes(Longitude, Latitude, size = Count)) +
+  geom_point(alpha = 0.5) +
+  labs(title = "Spatial clustering of fish observations")
+```
+
+Spatial autocorrelation likely → Consider the following
+
+-Mixed models
+
+-Spatial smooths (GAMs plus spatial splines)
+
+-Geostatistical approaches 
+
+13. Model sketching (not fitting everything!)
+
+Example 1: Species-specific abundance
+
+```{r}
+glmmTMB(
+  Count ~ Common_Name + (1|River),
+  family = nbinom2(),
+  data = fish_dat
+)
+```
+
+Example 2: Zero-inflated detection model
+
+```{r}
+glmmTMB(
+  Count ~ Common_Name + (1|River),
+  ziformula = ~1,
+  family = nbinom2(),
+  data = fish_dat
+)
+```
+
+
+| Data fingerprint            | What it tells you        | Plausible tools        |
+| --------------------------- | ------------------------ | ---------------------- |
+| Mean ≪ variance             | Overdispersion           | Negative binomial      |
+| Many zeros                  | Detection / availability | Zero-inflated models   |
+| Repeated sites              | Non-independence         | Mixed models           |
+| Skewed weights              | Multiplicative growth    | Log-normal models      |
+| Spatial clustering          | Shared environment       | Spatial random effects |
+| Extreme covariates dominate | Model chasing boundaries | Caution with MaxEnt    |
