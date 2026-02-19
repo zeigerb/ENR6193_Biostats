@@ -7,6 +7,9 @@ output:
     toc: true
     toc_depth: 2
     number_sections: true
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r}
@@ -15,22 +18,40 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE) #this is ju
 
 # Regression philosophy (Regression and Other Stories Chapters 6-8)
 
-So, what is regression and why do we hear so much about it nowadays? Part of the rise of regression from my view has to do with the suite of packages in R that mostly handle regression analyses (glmmTMB, lme4, some others I'm forgetting) and their ability to handle multiple types of data. Many classical statistical tests which relied on normal distribution assumptions can be expressed as special forms of a regression, so instead of running an ANOVA in this package and a linear model in that one you could use a single package to run everything you might need. 
+So, what is regression and why do we hear so much about it nowadays?
+Part of the rise of regression from my view has to do with the suite of
+packages in R that mostly handle regression analyses (glmmTMB, lme4,
+some others I'm forgetting) and their ability to handle multiple types
+of data. Many classical statistical tests which relied on normal
+distribution assumptions can be expressed as special forms of a
+regression, so instead of running an ANOVA in this package and a linear
+model in that one you could use a single package to run everything you
+might need.
 
-A classic regression analysis is set up to answer the question "How does the expected value of a response change as a function of the given predictors" and follows the form below for linear regression. 
-\[
+A classic regression analysis is set up to answer the question "How does
+the expected value of a response change as a function of the given
+predictors" and follows the form below for linear regression. $$
 Y_i = \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \cdots + \beta_p X_{ip} + \varepsilon_i
-\]
+$$
 
-- **\(Y_i\)**: the response (outcome) value for observation \(i\)
-- **\(X_{ij}\)**: the value of predictor \(j\) for observation \(i\) (e.g., temperature, treatment indicators)
-- **\(p\)**: the number of predictors in the model
-- **\(\beta_0\)**: the intercept (expected value of \(Y\) when all predictors are 0 / at their reference levels)
-- **\(\beta_j\)**: the coefficient for predictor \(j\) (expected change in \(Y\) for a 1-unit increase in \(X_{ij}\), holding other predictors constant)
-- **\(\varepsilon_i\)**: the residual (unexplained deviation for observation \(i\)), typically assumed \(\varepsilon_i \sim \mathcal{N}(0,\sigma^2)\)
-- **\(\sigma^2\)**: the residual variance (how spread out the residuals are around 0)
+-   $Y_i$: the response (outcome) value for observation $i$
+-   $X_{ij}$: the value of predictor $j$ for observation $i$ (e.g.,
+    temperature, treatment indicators)
+-   $p$: the number of predictors in the model
+-   $\beta_0$: the intercept (expected value of $Y$ when all predictors
+    are 0 / at their reference levels)
+-   $\beta_j$: the coefficient for predictor $j$ (expected change in $Y$
+    for a 1-unit increase in $X_{ij}$, holding other predictors
+    constant)
+-   $\varepsilon_i$: the residual (unexplained deviation for observation
+    $i$), typically assumed $\varepsilon_i \sim \mathcal{N}(0,\sigma^2)$
+-   $\sigma^2$: the residual variance (how spread out the residuals are
+    around 0)
 
-One of the most important things to understand about regression modeling is the residual variance. The graphs below will demonstrate what residuals are and how we look at their distributions.
+One of the most important things to understand about regression modeling
+is the residual variance. The graphs below will demonstrate what
+residuals are and how we look at their distributions.
+
 ```{r echo=FALSE}
 ###############################################################
 # 1) Linear model with Gaussian (normal) errors
@@ -85,7 +106,12 @@ ggplot(dat_lm, aes(x, y)) +
        x = "Predictor")
 ```
 
-You can see in this graph that most of our points are around our fit line with some variation in how far they are from the line. That variation in how far our data points are from our linear model predictions is called the residuals or sometimes the error! We can graph what this looks like using a frequency histogram, which will let us know if our model is "wrong" in ways that are somewhat consistent/normal.
+You can see in this graph that most of our points are around our fit
+line with some variation in how far they are from the line. That
+variation in how far our data points are from our linear model
+predictions is called the residuals or sometimes the error! We can graph
+what this looks like using a frequency histogram, which will let us know
+if our model is "wrong" in ways that are somewhat consistent/normal.
 
 ```{r echo=FALSE}
 ###############################################################
@@ -105,8 +131,11 @@ ggplot(data.frame(errors), aes(errors)) +
        y = "Density")
 ```
 
-
-Soooooooo our data like NEVER look like this!!!! The generalized linear model is cool and everything but our data points are usually varying in how far they are away from our model predictions in funky ways that mean we get to use generalized linear models! An example can be seen below with a negative binomial count dataset and its error structure.
+Soooooooo our data like NEVER look like this!!!! The generalized linear
+model is cool and everything but our data points are usually varying in
+how far they are away from our model predictions in funky ways that mean
+we get to use generalized linear models! An example can be seen below
+with a negative binomial count dataset and its error structure.
 
 ```{r echo=FALSE}
 ###############################################################
@@ -166,9 +195,19 @@ ggplot(data.frame(x_vals, nb_density),
 
 ```
 
-Typically linear models would be used specifically for analyzing the relationship between a continuous predictor (like temperature) and a continuous response (like height). In classic linear regression, the error/residuals are assumed to be approximated by the normal distribution which may or may not be a valid assumption. "Generalizing" the linear model means we move beyond assuming a normal distribution for our response and error distributions and instead consider different distributions like Guassian, binomial, Poisson, negative binomial, etc.
+Typically linear models would be used specifically for analyzing the
+relationship between a continuous predictor (like temperature) and a
+continuous response (like height). In classic linear regression, the
+error/residuals are assumed to be approximated by the normal
+distribution which may or may not be a valid assumption. "Generalizing"
+the linear model means we move beyond assuming a normal distribution for
+our response and error distributions and instead consider different
+distributions like Guassian, binomial, Poisson, negative binomial, etc.
 
-The GLM extends on the linear model in two important ways: by allowing for different error distributions and by allowing for different "link functions" which describe how predictors map to the mean. Common link functions include:
+The GLM extends on the linear model in two important ways: by allowing
+for different error distributions and by allowing for different "link
+functions" which describe how predictors map to the mean. Common link
+functions include:
 
 **Identity (Linear)**
 
@@ -176,47 +215,99 @@ The GLM extends on the linear model in two important ways: by allowing for diffe
 
 **Logit (Probabilities between 0 and 1)**
 
-Unlike many stats classes, we won't pretend there will be a perfect fit of analysis to data type here, instead we'll use the workflow below to explore how we can be constantly improving our analysis approach and looking for better ways to handle our data.
+Unlike many stats classes, we won't pretend there will be a perfect fit
+of analysis to data type here, instead we'll use the workflow below to
+explore how we can be constantly improving our analysis approach and
+looking for better ways to handle our data.
 
-The two most common packages for running generalized linear models (GLMs) are lme4 and glmmTMB. lme4 is the classic, the OG, the workhorse, and it is widely used and well-documented. It fits both random intercepts and slopes for mixed-effect models (we'll talk about this later) and has functionality for fitting Gaussian, Poisson, and binomial error distributions. glmmTMB is the young upstart, fast and more unstable (honestly same) and a bit less well-documented but still quite common in ecology papers nowadays. glmmTMB allows for more zero-inflated error distribution fitting options (Nbinom, hurdle, zeroinflated, etc.) and allows for some cool structuring in your random effects (more than just nested). glmmTMB also notoriously will NOT yell at you about overfitting your model (more predictors/more complex structure than you have data/variance to analyze with). You can probably tell that I'm a glmmTMB gurly at heart, I'll probably use it whenever we are doing GLMMs but lmk if you want some more lme4 worked examples.
+The two most common packages for running generalized linear models
+(GLMs) are lme4 and glmmTMB. lme4 is the classic, the OG, the workhorse,
+and it is widely used and well-documented. It fits both random
+intercepts and slopes for mixed-effect models (we'll talk about this
+later) and has functionality for fitting Gaussian, Poisson, and binomial
+error distributions. glmmTMB is the young upstart, fast and more
+unstable (honestly same) and a bit less well-documented but still quite
+common in ecology papers nowadays. glmmTMB allows for more zero-inflated
+error distribution fitting options (Nbinom, hurdle, zeroinflated, etc.)
+and allows for some cool structuring in your random effects (more than
+just nested). glmmTMB also notoriously will NOT yell at you about
+overfitting your model (more predictors/more complex structure than you
+have data/variance to analyze with). You can probably tell that I'm a
+glmmTMB gurly at heart, I'll probably use it whenever we are doing GLMMs
+but lmk if you want some more lme4 worked examples.
 
-In this exercise, we’re going to analyze data from a controlled tick movement arena assay. This is deliberately a little toy-ish, but it’s structured to explore the kinds of issues you actually run into with real ecological data plus it might be useful for some of Liz's work!
+In this exercise, we’re going to analyze data from a controlled tick
+movement arena assay. This is deliberately a little toy-ish, but it’s
+structured to explore the kinds of issues you actually run into with
+real ecological data plus it might be useful for some of Liz's work!
 
 # Experiment simulation/exercise setup
 
 Here’s the setup we’re pretending happened in the lab:
 
--**Each trial releases 15 adult ticks into a circular arena.**
+\-**Each trial releases 15 adult ticks into a circular arena.**
 
-**One of four repellents (or a control with no repellent) is applied to a specific zone of the arena.**
+**One of four repellents (or a control with no repellent) is applied to
+a specific zone of the arena.**
 
-**Over a 2-minute observation period, each tick is classified as either:**
+**Over a 2-minute observation period, each tick is classified as
+either:**
 
-**1 = spent the majority of the time in the half of the arena near the repellent**
+**1 = spent the majority of the time in the half of the arena near the
+repellent**
 
-**0 = spent the majority of the time in the half of the arena away from the repellent**
+**0 = spent the majority of the time in the half of the arena away from
+the repellent**
 
-This is a good example of slight data manipulation at the experimental level. We might have super fine-scale data on tick movement, speed, direction, etc. but at some point we need to analyze this stuff so we often simplify. Some common simplification reasons include:
+This is a good example of slight data manipulation at the experimental
+level. We might have super fine-scale data on tick movement, speed,
+direction, etc. but at some point we need to analyze this stuff so we
+often simplify. Some common simplification reasons include:
 
-**Matching response variable to scale to predictor scales (ex. tick counts as GPS points but predictors are averaged at county level)**
+**Matching response variable to scale to predictor scales (ex. tick
+counts as GPS points but predictors are averaged at county level)**
 
-**Mismatch between scientific research questions and granularity of response data (do I care about the nuances/variability of tick or mite movement behavior or do I care about repellent action?)**
+**Mismatch between scientific research questions and granularity of
+response data (do I care about the nuances/variability of tick or mite
+movement behavior or do I care about repellent action?)**
 
-**INTERPRETATION!!!!! Are you planning on talking about your results to managers or having other scientists look/understand your approach? If so, making your analysis simple and easy to interpret is an important consideration!**
+**INTERPRETATION!!!!! Are you planning on talking about your results to
+managers or having other scientists look/understand your approach? If
+so, making your analysis simple and easy to interpret is an important
+consideration!**
 
 **Ran out of time/had to complete the PhD**
 
-A note of simplifying your data: you can always make granular data more simple (I estimated hairloss on a scale of 0-100 but categorized values on an index from 1-5 for my phd), but you usually cannot make simple data more granular. If you're messing around with response data always remember to save your raw data separately in its own forbidden/no-touchy folder for your project. Common simplifications include the binary move we made in this example, clustering year/age values in age classes (juvenile, subadult, adult), or other thresholds. 
+A note of simplifying your data: you can always make granular data more
+simple (I estimated hairloss on a scale of 0-100 but categorized values
+on an index from 1-5 for my phd), but you usually cannot make simple
+data more granular. If you're messing around with response data always
+remember to save your raw data separately in its own forbidden/no-touchy
+folder for your project. Common simplifications include the binary move
+we made in this example, clustering year/age values in age classes
+(juvenile, subadult, adult), or other thresholds.
 
-So... tangent aside: our response is binary at the tick level, but with strong grouping:
+So... tangent aside: our response is binary at the tick level, but with
+strong grouping:
 
 **ticks are nested within trials**
 
 **trials are run in 5 physical arenas**
 
-Importantly, we’re going to bake in an arena effect on purpose. Some arenas are just... weird. Think about that one tick-y, fly-y, or chigger-y site where you know you'll find a horde of individuals but you can't explain why. For this arena example, maybe the lighting is off, maybe airflow is different, maybe the floor texture is subtly different. Whatever the reason, ticks in some arenas are more likely to drift toward the repellent zone regardless of treatment. That’s not a nuisance, that’s ecological structure, baby!
+Importantly, we’re going to bake in an arena effect on purpose. Some
+arenas are just... weird. Think about that one tick-y, fly-y, or
+chigger-y site where you know you'll find a horde of individuals but you
+can't explain why. For this arena example, maybe the lighting is off,
+maybe airflow is different, maybe the floor texture is subtly different.
+Whatever the reason, ticks in some arenas are more likely to drift
+toward the repellent zone regardless of treatment. That’s not a
+nuisance, that’s ecological structure, baby!
 
-We also include a continuous fixed effect, temperature (°C), because basically every biological process gets dragged around by temperature, and it gives us a clean example of how continuous predictors slot into GLMs and GLMMs. Doesn't make the most sense in our example but it'll be a good modeling addition to talk about.
+We also include a continuous fixed effect, temperature (°C), because
+basically every biological process gets dragged around by temperature,
+and it gives us a clean example of how continuous predictors slot into
+GLMs and GLMMs. Doesn't make the most sense in our example but it'll be
+a good modeling addition to talk about.
 
 So before we fit anything, we’re already making modeling decisions:
 
@@ -228,12 +319,18 @@ So before we fit anything, we’re already making modeling decisions:
 
 *NOW YOU TRY (FRANTIC TEACHER NOISES)!*
 
-In 2–3 sentences:
-In Regression and other Stories the authors are constantly talking about regressions as "generative models"...wtf does that mean?
+In 2–3 sentences: In Regression and other Stories the authors are
+constantly talking about regressions as "generative models"...wtf does
+that mean?
 
-Your response:
+Your response: If we have well-informed predictors (i.e. the process is
+"known") we can use the regression to "generate" a new dataset. So if we
+can accurately predict insect flight activity using temperature and
+r.h., then we can draw a new "sample" of activities based on given
+environmental records.
 
-##2.1 Simulate an example dataset (tick-level binary outcomes)##
+##2.1 Simulate an example dataset (tick-level binary outcomes)\##
+
 ```{r}
 library(lme4)
 library(glmmTMB)
@@ -304,29 +401,61 @@ glimpse(tick_dat)
 
 TIME FOR YOU TO CODE!
 
-Write code to answer:
-1) How many trials are there?  
-2) How many ticks total?  
-3) Confirm that each trial has 15 ticks (show a small table). 
+Write code to answer: 1) How many trials are there?\
+2) How many ticks total?\
+3) Confirm that each trial has 15 ticks (show a small table).
+
 ```{r}
 # YOUR CODE HERE
 
+tick_conf <- tick_dat %>%
+  group_by(trial_id) %>%
+  summarize(ticks_per = n_distinct(tick_id))
+
+tick_conf
+
+tick_conf %>% summarize(trials = n_distinct(trial_id),
+                       tick_tot = sum(ticks_per))
 
 ```
 
 # Exploratory data analysis (EDA): learning what the data want to be
 
-Before we touch a model, we need to spend some time with the data themselves. EDA is where we start figuring out:
+Before we touch a model, we need to spend some time with the data
+themselves. EDA is where we start figuring out:
 
 **What the observational unit really is**
 
 **What kinds of variation exist in the data**
 
-**Whether the structure we think we imposed experimentally actually shows up**
+**Whether the structure we think we imposed experimentally actually
+shows up**
 
-Remember from lab 2: we aren't fixing problems, we are molding our model around the bumps and grooves of our dataset. In a perfect world you would simulate your data and effect sizes, design a sampling regime or experiment to robustly test your expected relationships, then simply run your analysis on your collected data like you did with your simulated data. This is a fast-growing idea in disease ecology called "model-guided field work" (https://doi.org/10.1111/j.1461-0248.2012.01836.x,  https://doi.org/10.1890/070086). Most of the time we aren't so lucky...we end up having very little information (or, in the case of grad students, limited skill sets in the early years) to accurately model the relationships we'd like to explore. We end up going out and collecting some data with a research question in mind then show up in front of R hoping we can answer some questions with the data we have. In this course we'll largely stick to this idea that we are exploring data and looking for hints as to the best ways to analyze given its structure and our questions, but know that there exists an ideal scenario where you may feel comfortable enough with R and know enough about your system to simulate data -> design experiments -> analyze -> repeat. If this sounds like a utopia you'd like to explore, lmk and we can chat...
+Remember from lab 2: we aren't fixing problems, we are molding our model
+around the bumps and grooves of our dataset. In a perfect world you
+would simulate your data and effect sizes, design a sampling regime or
+experiment to robustly test your expected relationships, then simply run
+your analysis on your collected data like you did with your simulated
+data. This is a fast-growing idea in disease ecology called
+"model-guided field work"
+(<https://doi.org/10.1111/j.1461-0248.2012.01836.x>,
+<https://doi.org/10.1890/070086>). Most of the time we aren't so
+lucky...we end up having very little information (or, in the case of
+grad students, limited skill sets in the early years) to accurately
+model the relationships we'd like to explore. We end up going out and
+collecting some data with a research question in mind then show up in
+front of R hoping we can answer some questions with the data we have. In
+this course we'll largely stick to this idea that we are exploring data
+and looking for hints as to the best ways to analyze given its structure
+and our questions, but know that there exists an ideal scenario where
+you may feel comfortable enough with R and know enough about your system
+to simulate data -\> design experiments -\> analyze -\> repeat. If this
+sounds like a utopia you'd like to explore, lmk and we can chat...
 
-In our case, we simulated tick-level binary outcomes, but the biology and experimental design introduce structure at higher levels (trial, arena). EDA helps us decide whether those structures are likely to matter.
+In our case, we simulated tick-level binary outcomes, but the biology
+and experimental design introduce structure at higher levels (trial,
+arena). EDA helps us decide whether those structures are likely to
+matter.
 
 ```{r}
 trial_sum <- tick_dat %>%
@@ -342,25 +471,31 @@ head(trial_sum)
 
 ```
 
-## 3.1 Outcome balance##
-A very early (but very important) question for binary data is:
-Do we have a reasonable mix of 0s and 1s?
+## 3.1 Outcome balance
+
+A very early (but very important) question for binary data is: Do we
+have a reasonable mix of 0s and 1s?
+
 ```{r}
 tick_dat %>%
   count(toward) %>%
   mutate(prop = n / sum(n))
 
 ```
-Makes sense, right? We are testing repellents, it makes sense that the majority of ticks would be moving away from our repellents.
 
-*Your turn!*
-Is the outcome roughly balanced or highly skewed?
-Why might imbalance matter in logistic regression?
+Makes sense, right? We are testing repellents, it makes sense that the
+majority of ticks would be moving away from our repellents.
+
+*Your turn!* Is the outcome roughly balanced or highly skewed? Why might
+imbalance matter in logistic regression?
 
 Your response:
 
-## 3.2 Treatment × arena patterns##
-Now we start looking for structure we know exists, because we built it into the simulation on purpose.
+## 3.2 Treatment × arena patterns
+
+Now we start looking for structure we know exists, because we built it
+into the simulation on purpose.
+
 ```{r}
 trial_sum %>%
   ggplot(aes(treatment, prop_toward)) +
@@ -377,14 +512,17 @@ Which repellent appears most effective?
 
 Is there evidence of arena-level bias?
 
-Your response:
+Your response: Repellent B seems most effective from this view. Arena 2
+seems to have a consistently higher proportion of "towards"
+observations.
 
-This plot is already hinting at something important:
-treatment effects are not the only source of variation here.
+This plot is already hinting at something important: treatment effects
+are not the only source of variation here.
 
-## 3.3 Arena effects by treatment##
+## 3.3 Arena effects by treatment
 
 Let’s look at arenas more directly.
+
 ```{r}
 trial_sum %>%
   ggplot(aes(arena, prop_toward)) +
@@ -394,18 +532,31 @@ trial_sum %>%
   theme_bw()
 
 ```
+
 **Interpretation**
 
 Which arena appears systematically different?
 
-Your response:
+Your response: Arena 2 has a higher average prop_toward than others.
 
-At this point, it should be pretty clear that arena matters — but we probably don’t care about Arena 2 as a specific, special snowflake. We care that arenas as a class introduce variability.
+At this point, it should be pretty clear that arena matters — but we
+probably don’t care about Arena 2 as a specific, special snowflake. We
+care that arenas as a class introduce variability.
 
-That distinction is the entire motivation for random effects! We could create separate models for each arena, but we would lose some overall power in our ability to answer our research question on repellent activity. Adding arena as a random effect, in other words a grouping variable that impacts our response variable in a way we don't explicitly want to examine for its impact (I don't care which arena had the most 0 vs 1 movement responses), will help account for this extra between-group variance!
+That distinction is the entire motivation for random effects! We could
+create separate models for each arena, but we would lose some overall
+power in our ability to answer our research question on repellent
+activity. Adding arena as a random effect, in other words a grouping
+variable that impacts our response variable in a way we don't explicitly
+want to examine for its impact (I don't care which arena had the most 0
+vs 1 movement responses), will help account for this extra between-group
+variance!
 
 ## 3.4 Temperature as a continuous effect
-We also included temperature as a continuous predictor, because real ecological systems almost always respond to gradients.
+
+We also included temperature as a continuous predictor, because real
+ecological systems almost always respond to gradients.
+
 ```{r}
 trial_sum %>%
   ggplot(aes(temp_c, prop_toward)) +
@@ -420,13 +571,22 @@ trial_sum %>%
 
 Is temperature plausibly related to tick movement?
 
-Your response:
+Your response: There appear to be consistent positive relationships
+between temp and movement towards repellent.
 
-At this stage we are not deciding on a final model — we’re asking whether temperature is even worth carrying forward as a predictor. What might be a good reason why we would carry temperature forward even if we did not see a strong signal at this stage?
+At this stage we are not deciding on a final model — we’re asking
+whether temperature is even worth carrying forward as a predictor. What
+might be a good reason why we would carry temperature forward even if we
+did not see a strong signal at this stage?
+
+Response: It is a simple, well-known predictor of arthropod activity,
+and the model may be able to see an interaction between temp and
+repellent that we can't quit parse with the naked eye.
 
 # Choosing distributions and link functions
 
-Once we understand the data structure, we can start thinking about how to model it.
+Once we understand the data structure, we can start thinking about how
+to model it.
 
 Our response variable is:
 
@@ -436,13 +596,24 @@ Our response variable is:
 
 That immediately suggests a binomial likelihood.
 
-Write code to confirm that:
-1) `toward` is binary (only 0 and 1)  
-2) `prop_toward` is a proportion bounded [0,1]  
+Write code to confirm that: 1) `toward` is binary (only 0 and 1)\
+2) `prop_toward` is a proportion bounded [0,1]\
 3) `n_toward` is an integer count from 0 to 15
 
 ```{r}
 # YOUR CODE HERE
+
+tick_dat %>% distinct(toward)
+
+trial_sum %>% summarise(propMax = max(prop_toward),
+                        propMin = min(prop_toward),
+                        propTrue = is.double(prop_toward))
+
+trial_sum %>% summarise(towardMax = max(n_toward),
+                        towardMin = min(n_toward),
+                        intTrue = is.integer(n_toward))
+
+
 ```
 
 But GLMs require two choices:
@@ -465,7 +636,7 @@ Other common ecological combinations:
 
 **Positive continuous → Gamma or lognormal**
 
-## 4.1Visual intuition: distributions and links##
+## 4.1Visual intuition: distributions and links
 
 ```{r}
 par(mfrow = c(2, 3))
@@ -495,9 +666,11 @@ Your response:
 
 # Random effects: what they are and why we need them
 
-A random effect is how we model structured dependence in data. Formally, a random effect says:
+A random effect is how we model structured dependence in data. Formally,
+a random effect says:
 
->Observations within the same group are more similar to each other than to observations in other groups.
+> Observations within the same group are more similar to each other than
+> to observations in other groups.
 
 Instead of estimating a separate coefficient for each arena, we assume:
 
@@ -543,9 +716,11 @@ For our data, a random intercept for arena looks like:
 #(1 | arena)
 
 ```
+
 This says:
 
->Each arena has its own baseline probability of ticks moving toward the repellent, centered around a global mean.
+> Each arena has its own baseline probability of ticks moving toward the
+> repellent, centered around a global mean.
 
 Example for this dataset-
 
@@ -557,38 +732,69 @@ We expect:
 
 That makes arena a textbook random intercept.
 
-## 5.3 Troy is on another tangent  ##
-You might come across a "5-level rule" which is sometimes treated like a golden rule for random effects in GLMMs. It is a rule-of-thumb that says you need 5 or more levels to a random effect to estimate its variance reliably. You might have convergence issues if you ignore this rule, in ecology we ignore it all the time so take that for what it is...
+## 5.3 Troy is on another tangent
+
+You might come across a "5-level rule" which is sometimes treated like a
+golden rule for random effects in GLMMs. It is a rule-of-thumb that says
+you need 5 or more levels to a random effect to estimate its variance
+reliably. You might have convergence issues if you ignore this rule, in
+ecology we ignore it all the time so take that for what it is...
 
 # Model fitting
-Before fitting, we clean up factor levels and center temperature. What is centering? We center data by subtracting the mean from our values which gives us a relative idea of which values are warmer or cooler than normal. We do this in mixed-effects models specifically because a random intercept model assumes our expected response at a value of 0 for our predictors (or some reference value for categorical variables). Our temperature mean is NOT 0, so we need to center it before running a random intercept mixed-effects model. Average temperature will then = 0 but our units stay in degrees C. This is appropriate if our continuous variables are on the same scale. What if we included Relative Humidity? well relative humidity is bound between 0 and 100 unlike temperature and values might be more variable than temperature. This would mean that, regardless of how much relative humidity actually impacts our response, it would look like it does more work than temperature just because it has bigger numbers and varies more. Our models like big numbers and yes they may very well be lying! Enter: scaling! We scale a variable by dividing it by standard deviation (scale()) which gets rid of our units entirely. This makes it much easier to compare effect sizes between predictors at the cost of giving us an extra step to interpret. So, to wrap up:
 
-**Center if you have only one continuous variable in a GLMM, mandatory if you're running a random intercept GLMM**
+Before fitting, we clean up factor levels and center temperature. What
+is centering? We center data by subtracting the mean from our values
+which gives us a relative idea of which values are warmer or cooler than
+normal. We do this in mixed-effects models specifically because a random
+intercept model assumes our expected response at a value of 0 for our
+predictors (or some reference value for categorical variables). Our
+temperature mean is NOT 0, so we need to center it before running a
+random intercept mixed-effects model. Average temperature will then = 0
+but our units stay in degrees C. This is appropriate if our continuous
+variables are on the same scale. What if we included Relative Humidity?
+well relative humidity is bound between 0 and 100 unlike temperature and
+values might be more variable than temperature. This would mean that,
+regardless of how much relative humidity actually impacts our response,
+it would look like it does more work than temperature just because it
+has bigger numbers and varies more. Our models like big numbers and yes
+they may very well be lying! Enter: scaling! We scale a variable by
+dividing it by standard deviation (scale()) which gets rid of our units
+entirely. This makes it much easier to compare effect sizes between
+predictors at the cost of giving us an extra step to interpret. So, to
+wrap up:
 
-**Scale if you have 2 or more continuous variables and their measurement units differ**
+**Center if you have only one continuous variable in a GLMM, mandatory
+if you're running a random intercept GLMM**
 
-**Centering = subtracting mean from each value (temp_centered=temp-mean_temp)**
+**Scale if you have 2 or more continuous variables and their measurement
+units differ**
 
-**Scaling = dividing each value by a metric like standard deviation (temp_scale=temp/temp_SD)**
+**Centering = subtracting mean from each value
+(temp_centered=temp-mean_temp)**
 
-**Centering means we can still interpret our model on the original scale (change in response per 1 degree C)**
+**Scaling = dividing each value by a metric like standard deviation
+(temp_scale=temp/temp_SD)**
 
-**Scaling means we now have to interpret on the standard deviation scale or transform (change per 1 SD)**
+**Centering means we can still interpret our model on the original scale
+(change in response per 1 degree C)**
 
-Before we fit we will need to check what our treatment and arena variables are labeled as and relabel them as "factors" in order to have lme4 and glmmTMB treat the levels as comparable units.
-Write code to:
-1) Check what form the treatment and arena variables are currently set as
-2) Convert `treatment` to a factor with `Control` as the reference level  
-3) Convert `arena` to a factor  
-4) Print the levels of both  
+**Scaling means we now have to interpret on the standard deviation scale
+or transform (change per 1 SD)**
+
+Before we fit we will need to check what our treatment and arena
+variables are labeled as and relabel them as "factors" in order to have
+lme4 and glmmTMB treat the levels as comparable units. Write code to: 1)
+Check what form the treatment and arena variables are currently set as
+2) Convert `treatment` to a factor with `Control` as the reference
+level\
+3) Convert `arena` to a factor\
+4) Print the levels of both
 
 Extra challenge: try to do this with piping!
 
 ```{r}
 #Insert your code here
 ```
-
-
 
 ```{r}
 tick_mod_dat <- tick_dat %>% #just in case you got lost somewhere with the factor coding
@@ -599,12 +805,13 @@ tick_mod_dat <- tick_dat %>% #just in case you got lost somewhere with the facto
     temp_c_center = temp_c - mean(temp_c)
   )
 ```
-*NOW YOU TRY: centering vs scaling temperature (don’t just accept the magic)*
 
-*Write code to:*
-1) Create `temp_c_center` (mean-centered)  
-2) Create `temp_c_scaled` (z-scored / standardized)  
-3) Print the mean and sd of both vectors  
+*NOW YOU TRY: centering vs scaling temperature (don’t just accept the
+magic)*
+
+*Write code to:* 1) Create `temp_c_center` (mean-centered)\
+2) Create `temp_c_scaled` (z-scored / standardized)\
+3) Print the mean and sd of both vectors\
 4) Make a quick histogram of each (two plots is fine)
 
 ```{r}
@@ -612,7 +819,9 @@ tick_mod_dat <- tick_dat %>% #just in case you got lost somewhere with the facto
 ```
 
 ## 6.1 GLM (ignores grouping)
+
 First, let’s pretend arenas don’t exist.
+
 ```{r}
 m_glm <- glm(
   toward ~ treatment + temp_c_center,
@@ -626,14 +835,14 @@ summary(m_glm)
 
 *Student code space (why independence is a lie here)*
 
-Write code to show:
-1) How many ticks per trial  
-2) How many trials per arena  
+Write code to show: 1) How many ticks per trial\
+2) How many trials per arena\
 3) A quick table of counts by arena × treatment
 
 ```{r}
 # YOUR CODE HERE
 ```
+
 *Reflection*
 
 Why might this model underestimate uncertainty?
@@ -670,6 +879,7 @@ m_glmm_rs <- glmer(
 summary(m_glmm_rs)
 
 ```
+
 Quick checks + comparison (optional but useful)
 
 ```{r}
@@ -689,10 +899,20 @@ anova(m_glmm, m_glmm_rs, test = "Chisq")
 # Also show AIC as a quick check
 AIC(m_glmm, m_glmm_rs)
 ```
-# Convergence: what it is and why you should care
-What does convergence mean? Convergence is a model state that is reached when the numerical optimizer inside your GLMM function has found the most likely parameters to give the data points you have. In GLMM/regression world the optimization algorithm used is called Maximum Likelihood Estimation (MLE), that is basically all I know plus that the glmmTMB optimizer tends to converge faster than lme4 and that one of the primary differences in how the various glmm packages operate is through their different optimization algorithms to impliment MLE.
 
-A model converges when the optimizer believes it has found parameter values that:
+# Convergence: what it is and why you should care
+
+What does convergence mean? Convergence is a model state that is reached
+when the numerical optimizer inside your GLMM function has found the
+most likely parameters to give the data points you have. In
+GLMM/regression world the optimization algorithm used is called Maximum
+Likelihood Estimation (MLE), that is basically all I know plus that the
+glmmTMB optimizer tends to converge faster than lme4 and that one of the
+primary differences in how the various glmm packages operate is through
+their different optimization algorithms to impliment MLE.
+
+A model converges when the optimizer believes it has found parameter
+values that:
 
 **maximize the likelihood**
 
@@ -702,7 +922,7 @@ A model converges when the optimizer believes it has found parameter values that
 
 Convergence is not “this model is correct” — it’s:
 
->“The math didn’t obviously fail.”
+> “The math didn’t obviously fail.”
 
 What non-convergence usually means
 
@@ -714,38 +934,39 @@ What non-convergence usually means
 
 **collinearity**
 
-If your model converges, that does not mean it is all good to go! Still need to check fit, dispersion, etc. but a lack of convergence is a clear sign of issues.
-# 7.1 Singularity
+If your model converges, that does not mean it is all good to go! Still
+need to check fit, dispersion, etc. but a lack of convergence is a clear
+sign of issues. \# 7.1 Singularity
 
 ```{r}
 isSingular(m_glmm)
 
 ```
 
-
-Write code to:
-1) Check singularity for both models (random intercepts vs random slopes if you fit them)  
-2) Extract `VarCorr()` and identify which variance component is ~0  
-3) Print the random effects for arena (`ranef`) and interpret which arena is “highest”
+Write code to: 1) Check singularity for both models (random intercepts
+vs random slopes if you fit them)\
+2) Extract `VarCorr()` and identify which variance component is \~0\
+3) Print the random effects for arena (`ranef`) and interpret which
+arena is “highest”
 
 ```{r}
 # YOUR CODE HERE
 ```
 
-
 #7.2 Random-effect variance
+
 ```{r}
 VarCorr(m_glmm)
 ranef(m_glmm)$arena
 ```
+
 #Interpretation
 
 Is arena variance meaningful?
 
 Your response:
 
-#7.3 Residual diagnostics
-Simulation-based residuals help us evaluate:
+#7.3 Residual diagnostics Simulation-based residuals help us evaluate:
 
 **dispersion**
 
@@ -758,6 +979,7 @@ library(DHARMa)
 res <- simulateResiduals(m_glmm)
 plot(res)
 ```
+
 Reflection
 
 What kinds of problems can simulation-based residuals detect?
@@ -765,9 +987,12 @@ What kinds of problems can simulation-based residuals detect?
 Your response:
 
 # Interpreting repellent effects
+
 *Interpretation of the Tick Movement Logistic Model*
 
-We fit a logistic regression model predicting whether a tick moved toward the repellent zone (1) versus away (0) as a function of treatment and centered temperature:
+We fit a logistic regression model predicting whether a tick moved
+toward the repellent zone (1) versus away (0) as a function of treatment
+and centered temperature:
 
 $logit(p)=β0+βtreatment+β1tempcenter$
 
@@ -775,7 +1000,8 @@ $logit(p)=β0+βtreatment+β1tempcenter$
 
 Estimate: 0.426
 
-The intercept represents the expected log-odds that a tick moves toward the repellent when:
+The intercept represents the expected log-odds that a tick moves toward
+the repellent when:
 
 Treatment = Control (reference level)
 
@@ -785,50 +1011,55 @@ Back-transforming to probability:
 
 $p=e0.4261+e0.426≈0.60$
 
-So, under control conditions at average temperature, the predicted probability that a tick moves toward the repellent zone is approximately 60%.
+So, under control conditions at average temperature, the predicted
+probability that a tick moves toward the repellent zone is approximately
+60%.
 
-Note: The intercept is not statistically significant (p = 0.17), but intercept significance is rarely biologically meaningful in this context, it is primarily a baseline reference point.
+Note: The intercept is not statistically significant (p = 0.17), but
+intercept significance is rarely biologically meaningful in this
+context, it is primarily a baseline reference point.
 
 *Treatment Effects*
 
-Each treatment coefficient represents the change in log-odds relative to the control, holding temperature constant.
+Each treatment coefficient represents the change in log-odds relative to
+the control, holding temperature constant.
 
 *RepA*
 
-$Estimate: −0.764$
-$Odds ratio: exp(−0.764) ≈ 0.47$ 
+$Estimate: −0.764$ $Odds ratio: exp(−0.764) ≈ 0.47$
 
-We are exponentiating our estimates to convert them to a probability percentage (easier to talk about)
-Interpretation:
-Ticks exposed to RepA have approximately 53% lower odds of moving toward the repellent zone compared to control, at the same temperature.
+We are exponentiating our estimates to convert them to a probability
+percentage (easier to talk about) Interpretation: Ticks exposed to RepA
+have approximately 53% lower odds of moving toward the repellent zone
+compared to control, at the same temperature.
 
 This effect is statistically significant ($p = 0.041$).
 
 *RepB*
 
-$Estimate: −1.794$
-$Odds ratio: exp(−1.794) ≈ 0.17$
+$Estimate: −1.794$ $Odds ratio: exp(−1.794) ≈ 0.17$
 
-Interpretation:
-Ticks exposed to RepB have about 83% lower odds of moving toward the repellent zone compared to control, holding temperature constant.
+Interpretation: Ticks exposed to RepB have about 83% lower odds of
+moving toward the repellent zone compared to control, holding
+temperature constant.
 
 This is a strong and highly significant effect ($p < 0.001$).
 
 *RepC*
 
-$Estimate: −0.572$
-$Odds ratio: exp(−0.572) ≈ 0.56$
+$Estimate: −0.572$ $Odds ratio: exp(−0.572) ≈ 0.56$
 
-Interpretation:
-RepC is associated with a 44% reduction in odds of moving toward the repellent zone compared to control, but this effect is not statistically significant ($p = 0.14$).
+Interpretation: RepC is associated with a 44% reduction in odds of
+moving toward the repellent zone compared to control, but this effect is
+not statistically significant ($p = 0.14$).
 
 *RepD*
 
-$Estimate: −1.381$
-$Odds ratio: exp(−1.381) ≈ 0.25$
+$Estimate: −1.381$ $Odds ratio: exp(−1.381) ≈ 0.25$
 
-Interpretation:
-RepD reduces the odds of moving toward the repellent zone by approximately 75% relative to control, holding temperature constant. This effect is statistically significant (p < 0.001).
+Interpretation: RepD reduces the odds of moving toward the repellent
+zone by approximately 75% relative to control, holding temperature
+constant. This effect is statistically significant (p \< 0.001).
 
 *Temperature Effect*
 
@@ -840,19 +1071,28 @@ The log-odds of moving toward the repellent increase by 0.218
 
 $Odds ratio: exp(0.218) ≈ 1.24$
 
-Interpretation:
-For each 1°C increase above the average temperature, the odds that a tick moves toward the repellent zone increase by approximately 24%, holding treatment constant.
+Interpretation: For each 1°C increase above the average temperature, the
+odds that a tick moves toward the repellent zone increase by
+approximately 24%, holding treatment constant.
 
-This effect is highly significant (p < 0.001).
+This effect is highly significant (p \< 0.001).
 
 Big Picture Interpretation
 
-Across treatments, several repellents significantly reduce the probability that ticks move toward the treated zone, with RepB and RepD showing the strongest effects.
+Across treatments, several repellents significantly reduce the
+probability that ticks move toward the treated zone, with RepB and RepD
+showing the strongest effects.
 
-However, temperature independently increases the probability that ticks move toward the repellent area, suggesting that behavioral responses are not purely treatment-driven but are also influenced by environmental conditions.
+However, temperature independently increases the probability that ticks
+move toward the repellent area, suggesting that behavioral responses are
+not purely treatment-driven but are also influenced by environmental
+conditions.
 
-Because this is a logistic model, coefficients are interpreted on the log-odds scale. As with other GLMs, we can interpret them directly in log-odds, or exponentiate them to obtain odds ratios, which are often easier to explain.
-# 8.1 Odds ratios
+Because this is a logistic model, coefficients are interpreted on the
+log-odds scale. As with other GLMs, we can interpret them directly in
+log-odds, or exponentiate them to obtain odds ratios, which are often
+easier to explain. \# 8.1 Odds ratios
+
 ```{r}
 fixef_tab <- tidy(m_glmm, effects = "fixed", conf.int = TRUE) %>%
   mutate(
@@ -863,20 +1103,22 @@ fixef_tab <- tidy(m_glmm, effects = "fixed", conf.int = TRUE) %>%
 
 fixef_tab
 ```
+
 *Student code space (odds ratios → words)*
 
-Write code to:
-1) Pull the odds ratio for `RepB` (or whichever repellent you choose)  
-2) Convert it to a percent change in odds vs control: `(OR - 1) * 100`  
+Write code to: 1) Pull the odds ratio for `RepB` (or whichever repellent
+you choose)\
+2) Convert it to a percent change in odds vs control: `(OR - 1) * 100`\
 3) Write one sentence interpretation *in a comment* next to your code
 
 ```{r}
 # YOUR CODE HERE
 ```
 
-
 # 8.2 Predicted probabilities
+
 Odds ratios are useful, but probabilities are often more intuitive.
+
 ```{r}
 newdat <- expand_grid(
   treatment = levels(tick_mod_dat$treatment),
@@ -895,11 +1137,15 @@ newdat %>%
   ylim(0, 1) +
   theme_bw()
 ```
-Often times you'll see odds-ratios reported in stats sections, but the pros will often go one-step further and interpret probabilities using the predict function above.
+
+Often times you'll see odds-ratios reported in stats sections, but the
+pros will often go one-step further and interpret probabilities using
+the predict function above.
 
 *Interpretation*
 
-What is the absolute probability difference between control and the strongest repellent?
+What is the absolute probability difference between control and the
+strongest repellent?
 
 Your response:
 
@@ -921,9 +1167,15 @@ Your response:
 
 Literature/Resources:
 
-- Actual vignette for fitting glmms in glmmTMB: https://cran.r-project.org/web/packages/glmmTMB/glmmTMB.pdf
--Very good description of error distributions: https://r.qcbs.ca/workshop07/book-en/choose-an-error-distribution.html
-- Slightly notation-heavy explanation of generalized linear model, great odds ratio interpretation explanation: https://stats.oarc.ucla.edu/other/mult-pkg/introduction-to-generalized-linear-mixed-models/
-- Regression and other Stories Chapters 6-8 https://users.aalto.fi/~ave/ROS.pdf
-- Very good explanation of mixed models and hierarchy/grouping/slopes and intercepts: https://ourcodingclub.github.io/tutorials/mixed-models/
-
+-   Actual vignette for fitting glmms in glmmTMB:
+    <https://cran.r-project.org/web/packages/glmmTMB/glmmTMB.pdf> -Very
+    good description of error distributions:
+    <https://r.qcbs.ca/workshop07/book-en/choose-an-error-distribution.html>
+-   Slightly notation-heavy explanation of generalized linear model,
+    great odds ratio interpretation explanation:
+    <https://stats.oarc.ucla.edu/other/mult-pkg/introduction-to-generalized-linear-mixed-models/>
+-   Regression and other Stories Chapters 6-8
+    <https://users.aalto.fi/~ave/ROS.pdf>
+-   Very good explanation of mixed models and hierarchy/grouping/slopes
+    and intercepts:
+    <https://ourcodingclub.github.io/tutorials/mixed-models/>
