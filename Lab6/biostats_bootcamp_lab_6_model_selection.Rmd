@@ -1,0 +1,445 @@
+---
+title: "biostats_bootcamp_lab_6_model_selection"
+author: "Troy Koser"
+date: "2026-02-24"
+output: html_document
+---
+
+# Introduction
+
+Model selection is the process of deciding which statistical model structure is most appropriate for answering a given research question.
+
+In ecology, this rarely means “finding the one true model.” Instead, it usually means deciding:
+
+**What biological process scale matters (monthly vs annual)?**
+
+**What covariates represent mechanism vs proxy?**
+
+**What estimand are we trying to interpret (prediction, mechanism, or causation)?**
+
+**How much structure (space, time, hierarchy) must be represented?**
+
+My philosophy for model selection is that it should be treated as a scientific, question-driven choice vs. a statistical process that happens during model fitting/checking.
+
+This lab demonstrates three defensible model-selection workflows using the **Portal Project rodent dataset**:
+
+1. **AIC-first (prediction-oriented)**
+2. **Ecology-first + collinearity hygiene (mechanistic inference)**
+3. **DAG-first (estimand-driven / causal framing)**
+
+The goal is to show how *the same dataset* can support different models depending on your research objective/questions. We'll use essentially the same model function, GLMM in GLMMtmb, but you'll see how our research question and model selection approach changes what we can say about the ecology of this system.
+Side note, this Portal Project dataset from UF is SICK and one of the coolest ways I've seen ecologists store/analyze data for a long term project: https://portal.weecology.org/
+Essentially this is a large, long-term ecological monitoring project in SE Arizona (near Portal, AZ) in the Chihuahuan Desert investigating interactions between the plant production, rodents, and ants! The authors here are specifically interested in granivory competitive interactions but kinda moved away from ant stuff and focused more on rodents recently, so we are sticking with the rodent data today. They have 24 exp plots (50mx50m) in which rodents are cordoned off from other plots to keep rodent communities from moving around. We'll just work with their control data (which is huge and very cool in-and-of itself). Rodents have been trapped once a month on the weekend closest to the new moon.
+Portal data paper explaining long-term ecological data collection: https://www.biorxiv.org/content/biorxiv/early/2020/06/13/332783.full.pdf
+Very much goals, I want to be them one day, that is all.
+
+# Setup
+
+```{r, echo=FALSE}
+
+#setwd("~/Lab6") #insert your wd here
+# Core
+library(tidyverse)
+library(janitor) #helps clean up names
+library(lubridate)
+
+# Modeling helpers
+library(glmmTMB)
+library(performance)   # check_collinearity(), r2(), etc.
+library(broom.mixed)
+library(ggeffects)
+
+# Model selection (AIC workflow)
+library(MuMIn)
+
+# DAG workflow
+library(dagitty) 
+```
+
+# 1.0 Portal dataset import and cleaning
+
+```{r}
+master_path <- "portal_master.csv"
+d <- read_csv(master_path, show_col_types = FALSE) |>
+  clean_names()
+
+# Drop the stray index column if present
+d <- d |>
+  select(-any_of(c("unnamed_0", "x1", "x")))
+
+glimpse(d)
+
+```
+You can see here that we don't have many of our environmental covariates until ~ 1983 so we'll need to do some filtering. We also need to make sure we only have 1 plot observation per season per year, the uniqueness check will help us out there.
+```{r}
+# Key uniqueness check: should be 1 row per plot × period
+d |> count(plot, period) |> filter(n > 1) 
+
+# Effort + response quick looks
+summary(d$effort) #fairly even effort
+summary(d$y_count) #0-17 but generally fairly even occurrence
+mean(d$y_occ, na.rm = TRUE)
+```
+Some quick sanity checks:
+
+Are keys unique? (1 row per plot x period?)
+
+Do we understand what a “0” means?
+
+Is effort constant or variable?
+
+```{r}
+d_mod <- d |>
+  mutate(
+    season = factor(season),
+    plot   = factor(plot),
+    ym     = as.Date(ym)  
+  ) |>
+  # keep rows where covariates exist 
+  filter(
+    !is.na(y_count),
+    !is.na(y_occ),
+    !is.na(precip),
+    !is.na(airtemp),
+    !is.na(ndvi),
+    effort > 0
+  ) |>
+  mutate(
+    log_effort = log(effort),
+    z_precip       = as.numeric(scale(precip)),
+    z_airtemp      = as.numeric(scale(airtemp)),
+    z_ndvi         = as.numeric(scale(ndvi)),
+    z_precip_lag1  = as.numeric(scale(precip_lag1)),
+    z_precip_lag2  = as.numeric(scale(precip_lag2))
+  )
+
+d_mod |> summarise(
+  n = n(),
+  years_min = min(year, na.rm = TRUE),
+  years_max = max(year, na.rm = TRUE)
+) #this is a big old pipe to 1) set some vars as factors 2) filter out NAs which will chuck out 1977-1983 data and 3)scale our continuous variables and log our effort metric.
+```
+Remember why we are standardizing here? Because precip, air temp, and ndvi shall all be on different scales!
+
+# Workflow 1: “AIC chooses the ‘best’ predictive model” (AIC/Dredge)
+
+If you'd like to find the most parsimonious combination of your predictors to explain variation in your data, then AIC is a great choice! AIC prioritizes a prediction fit; what predictors or combinations of predictors best predict my data? 
+
+We’ll do this on occurrence (binary) to keep it fast.
+
+# 1A. Fit a global occurrence model
+```{r}
+options(na.action = "na.fail")  # required for MuMIn::dredge
+d<-d_mod
+d_aic <- d |>
+  drop_na(
+    y_occ,
+    season,
+    z_precip,
+    z_airtemp,
+    z_ndvi,
+    z_precip_lag1,
+    z_precip_lag2
+  )
+m_global <- glmmTMB(
+  y_occ ~ season +
+    z_precip + z_airtemp + z_ndvi +
+    z_precip_lag1 + z_precip_lag2 +
+    (1 | plot),
+  family = binomial(),
+  data = d_aic
+)
+
+summary(m_global)
+```
+Current precip does nothing, nor does temperature, higher NDVI=lower occurrence, more precip last month=lower occurrence, more precip 2 months ago = lower occurrence, summer has less occurrence than fall. 
+
+What might we expect biologically?
+Precip -> veg -> more rodents (positive relationships)
+NDVI is also negative...
+
+Three likely cuplits:
+Multicollinearity (precip and lags are related, as is NDVI)
+Precip mediates NDVI so our signs for both are likely to flip around if we include both
+We've got the model structure wrong (missing random effects, complexity to fixed effects like lags or quadratics)
+
+Also peek that wild variance and SD for our random effect! So essentially all of the cool variability in our occurrence dataset comes from spatial heterogeneity across plots, our climate vars are explaining very little and AIC
+is trying to squeeze some signal from them.
+
+One way we can check to see how much variation our fixed effects are explaining on their own is by running a simple glm without the random effect then looking at the Null and Residual deviances. 
+```{r}
+m_fixed <- glm(
+  y_occ ~ season +
+    z_precip + z_airtemp + z_ndvi +
+    z_precip_lag1 + z_precip_lag2,
+  family = binomial(),
+  data = d_aic
+)
+
+summary(m_fixed)
+# crude pseudo-R2 (McFadden-like via performance)
+performance::r2(m_fixed)
+```
+It looks like we've explained a whopping 1% of the variation in our response with our fixed effects but look! Our precip lags are still significant!
+
+# 1B. Dredge (all subsets) + top model(s)
+
+Dredge is an automated model selection function in the MuMIn package and kinda a naughty word in some ecology/stats circles. It basically takes all your fixed effects and runs all the possible combinations (subsets)
+and compares them with our "global" model above which includes everything we think we might want.
+```{r}
+dd <- dredge(m_global, trace = FALSE) #warning: this will take forever, I tried it with the abundance data and I gave up after 2 hours...binary stuff will be easier
+head(dd, 10)# for the most part we are looking at AICc here
+
+best_occ <- get.models(dd, 1)[[1]] #basically just selects the first/top model from the dredge activity
+summary(best_occ) #sumarizes that model!
+```
+So our global model is 
+\[y_occ ~ season + z_airtemp + z_ndvi + z_precip_lag1 + z_precip_lag2 + (1|plot)\]
+and the model chosen by dredge is 
+\[y_occ ~ season + z_ndvi + z_precip_lag1 + z_precip_lag2 + (1|plot)\]
+We kicked out current air temperature and temperature, but you'll notice that our AICs are basically within 4 values for the top 10 models, indicating that we don't really have a clear winner here. We would have plenty of wiggle room to choose a model that is ecologically more realistic simply based on AIC values. Importantly the summary looks the same, with higher NDVI -> lower occurrence and more rain 1 - 2 months ago -> lower occurrence.
+
+# 1C. Interpret what AIC did (effect plot + variable list)
+```{r}
+plot(ggpredict(best_occ, terms = "z_ndvi [-2:2 by=0.25]"))
+plot(ggpredict(best_occ, terms = "z_precip_lag1 [-2:2 by=0.25]"))
+plot(ggpredict(best_occ, terms = "z_precip_lag2 [-2:2 by=0.25]"))
+plot(ggpredict(best_occ, terms = "season"))
+```
+Those large error bars should scare you immediately when plotting the effects plots. 
+
+A good way to find out if you have an issue with your fixed effects is by looking for mediator effects. Basically: what happens to x covariate when we hold y covariate constant?
+```{r}
+m_total <- glmmTMB(
+  y_occ ~ season + z_precip_lag1 + (1|plot),
+  family=binomial(),
+  data=d_aic
+)
+
+m_with_ndvi <- glmmTMB(
+  y_occ ~ season + z_precip_lag1 + z_ndvi + (1|plot),
+  family=binomial(),
+  data=d_aic
+)
+
+summary(m_total)$coefficients$cond["z_precip_lag1",]
+summary(m_with_ndvi)$coefficients$cond["z_precip_lag1",]
+```
+Also notice that the model without ndvi reduced our effect size, kinda increased standard error, and reduced our z score for the precip 1-month lag variable. This is the classic idea of a "mediator" or a variable that might not explain your response well but is affected/affects one of your important fixed effects, but not enough for AIC to care. We can use the approaches below to investigate how ndvi and precip might work in this system.
+
+# Workflow 2: Ecological prioritization + collinearity + gradient checks (purpose-built inference)
+
+When you're selecting a model for ecological mechanistic inference, you'd like to know how one specific suite of variables impacts your response, you would usually:
+
+**1) choose a small candidate set a priori,**
+
+**2) diagnose multicollinearity,**
+
+**3) check gradients/ranges so you know what variation is actually informing coefficients.**
+
+# 2A. Collinearity diagnostics (correlations + VIF-like checks)
+```{r}
+vars <- d_mod |>
+  select(z_precip, z_airtemp, z_ndvi, z_precip_lag1, z_precip_lag2) |>
+  drop_na()
+
+cor(vars) |> round(2)
+
+# this is another way to check for multicollinearity, basically run a linear model then use this nifty check_collinearity function in the performance package! Honestly wish I'd remembered this existed a couple weeks ago...
+m_proxy <- lm(z_ndvi ~ z_precip + z_airtemp + z_precip_lag1 + z_precip_lag2, data = d_aic)
+performance::check_collinearity(m_proxy)
+
+m_proxy1 <- lm(z_precip ~ z_ndvi + + z_airtemp + z_precip_lag1 + z_precip_lag2, data = d_aic)
+performance::check_collinearity(m_proxy1)
+```
+VIFs around 1 typically means we don't have huge multicollinearity issues.
+
+# 2B. Gradient / leverage checks (who has the variation?)
+```{r}
+# Ranges overall
+d_mod |> summarise(
+  precip_rng  = diff(range(precip, na.rm = TRUE)),
+  airtemp_rng = diff(range(airtemp, na.rm = TRUE)),
+  ndvi_rng    = diff(range(ndvi, na.rm = TRUE))
+)
+
+# Variation across time (can reveal "soaks up spatial/temporal structure")
+d_mod |>
+  group_by(year) |>
+  summarise(
+    precip = mean(precip, na.rm = TRUE),
+    airtemp = mean(airtemp, na.rm = TRUE),
+    ndvi = mean(ndvi, na.rm = TRUE)
+  ) |>
+  pivot_longer(cols = c(precip, airtemp, ndvi)) |>
+  ggplot(aes(x = year, y = value)) +
+  geom_line() +
+  facet_wrap(~name, scales = "free_y") +
+  theme_bw()
+```
+So we can start to see the inklings of a shared temporal trend here: air temps are mostly stable with some slight decline over time, ndvi is pretty much declining over time, and so is precip. 2002-2004 there is an interesting huge drop in air temp, ndvi, and precip. We probably need to add a temporal structure here if we want to start looking at our actual variable differences and not just long term changes in occurrence/ these variables over time. Shared temporal signals are cool but very hard to parse causation for correlation. Let's look at how occurrence correlates with ndvi and precip:
+
+
+```{r}
+d_aic |> 
+  group_by(year) |> 
+  summarise(
+    occ = mean(y_occ),
+    precip = mean(precip, na.rm=TRUE),
+    ndvi = mean(ndvi, na.rm=TRUE)
+  ) |> 
+  pivot_longer(-year) |> 
+  ggplot(aes(year, value)) +
+  geom_line() +
+  facet_wrap(~name, scales="free_y") +
+  theme_bw()
+```
+So our occurrence varies pretty dramatically over time, with substantial drops in 2005 and 2009 which were preceded by low precip and ndvi values in the previous years. It seems like we might be picking up on a drought/multi-year drift system so we definitely need to account for temporal structure somehow. Let's start by just adding year as a fixed effect or random structure
+
+```{r}
+m_with_year <- glmmTMB(
+  y_occ ~ season + scale(year) + z_precip_lag1 + z_ndvi + (1|plot),
+  family=binomial(),
+  data=d_aic
+)
+summary(m_with_year)
+m_with_year_re <- glmmTMB(
+  y_occ ~ season + z_precip_lag1 + z_ndvi + (1|plot) + (1|year),
+  family=binomial(),
+  data=d_aic
+)
+summary(m_with_year_re)
+```
+Welp year as a fixed effect didn't do much, probably is not a clean downward trend. 
+
+Year as a random effect does fairly well but we still aren't seeing the relationships we might expect and our year standard deviation is a bit larger than the mean and overall small, so it is not adding great structure as is. Also we are asking a fundamentally different question about our means now. We are asking "Does a month with above average NDVI/Precip for that year have higher occurrence?" We probably don't care too much about this because we'll basically get a phenology/seasonal collection signal. A question we are probably more interested in is "Do high NDVI years produce high rodent occurrence rates in the next year or two?"
+Let's add a lag to the ndvi var to catch it up to our occurrence estimates.
+```{r}
+d_lag <- d_aic |> 
+  arrange(plot, year, month) |> 
+  group_by(plot) |> 
+  mutate(
+    ndvi_lag12 = lag(ndvi, 12),
+    ndvi_lag24 = lag(ndvi, 24)
+  ) |> 
+  ungroup()
+options(na.action = "na.omit")
+
+m_ndvi12 <- glmmTMB(
+  y_occ ~ season + scale(ndvi_lag12) + (1|plot),
+  family = binomial(),
+  data = d_lag
+)
+
+summary(m_ndvi12)
+```
+AHMG WHAT?! Our lag ndvi signal is now hella strong and super clean. Our AIC blows the other ones out of the water (low bar) and has the biological relationship we'd expect between ndvi and rodent occurrence.
+
+# Workflow 3: DAG framing (estimand-first)
+
+Causal inference is kinda like the holy grail of ecological statistical inference. Here we attempt to account for as much of the ecology, and the interactions of different variables, as we can to create an ecologically accurate model. First, start with how you think your predictors affect your response and each other. In causal inference for ecology this usually involves drawing a DAG or Directed Acyclic Graph. DAGs have:
+
+**Nodes = variables**
+
+**Arrows = assumed causal direction**
+
+**Directed = arrows have direction**
+
+**Acyclic = no feedback loops**
+
+Key DAG Components (quick definitions)
+
+**Exposure: the variable whose effect we care about (e.g., Precip)**
+
+**Outcome: the response (e.g., Occurrence)**
+
+**Mediator: a variable on the causal pathway**
+
+Example: Precip → NDVI → Occ
+
+NDVI is a mediator of precipitation’s effect
+
+**Confounder: a variable that affects both exposure and outcome**
+
+Example: Year → Precip and Year → Occ
+
+If unaccounted for, it biases the exposure–outcome relationship
+
+**Collider: a variable influenced by two variables**
+
+Conditioning on colliders can introduce bias
+
+Let's try it for one of our occurrence models with ndvi, precip, plot, year, season, and occurrence.
+```{r}
+dag_model <- dagitty("
+dag {
+  Precip -> NDVI
+  NDVI -> Occ
+  Precip -> Occ
+  
+  Season -> NDVI
+  Season -> Occ
+  Season -> Precip
+  
+  Plot -> NDVI
+  Plot -> Precip
+  Plot -> Occ
+  
+  Year -> Precip
+  Year -> NDVI
+  Year -> Occ
+}
+")
+
+plot(dag_model)
+```
+So Year variations impact precip and ndvi, season impact occ via phenology and ndvi via plant phenology, plus precip via seasonal variation n precip. Plot affects precip and ndvi via spatial variations in weather/vegetation or habitat phenology. 
+
+Now we need to decide what we want to estimate. Two examples:
+-Total effect of precip on rodent occurrence
+-Direct effect of precip on rodent occurrence when holding vegetation (ndvi) constant
+
+```{r}
+adjustmentSets(dag_model, exposure = "Precip", outcome = "Occ")
+```
+
+```{r}
+m_total_effect <- glmmTMB(
+  y_occ ~ season + z_precip_lag1 + (1|plot) + (1|year),
+  family = binomial(),
+  data = d_aic
+)
+
+summary(m_total_effect)
+```
+
+How does lagged precipitation relate to rodents through all pathways (including vegetation)?
+
+```{r}
+m_direct_effect <- glmmTMB(
+  y_occ ~ season + z_precip_lag1 + z_ndvi + (1|plot) + (1|year),
+  family = binomial(),
+  data = d_aic
+)
+
+summary(m_direct_effect)
+```
+How does lagged precipitation relate to rodents via vegetation?
+
+```{r}
+summary(m_total_effect)$coefficients$cond["z_precip_lag1",]
+summary(m_direct_effect)$coefficients$cond["z_precip_lag1",]
+(-0.206 - (-0.150)) / -0.206
+```
+So NDVI did indeed shrink our precip lag effect, meaning precip impacts ndvi which impacts occ and leaving out ndvi miss-represents the impact precip has in the overall system. Roughly 27% of the precipitation association operates through NDVI (under this assumed DAG).
+
+We just ran three different model selection workflows on the exact same dataset — and got different answers.
+
+**First, AIC selected a model that fit the data best in an information-theoretic sense. It didn’t care about ecology. It didn’t care about mechanism. It minimized Kullback–Leibler divergence.**
+
+**Second, when we stepped back and looked at gradients, temporal structure, and demographic lags, we realized our initial model was asking the wrong biological question. Once we aligned the lag structure with the ecology, the sign flipped and our model better fit the ecological signal we expected to see.**
+
+**Third, when we used a DAG, we saw that including NDVI changed the estimand. Without NDVI, we estimated the total effect of precipitation. With NDVI, we estimated the direct effect holding vegetation constant. The coefficient shrank — not because of multicollinearity — but because we blocked a causal pathway.**
+
+All-in-all model selection is about the questions you're asking, not about the 'best' or 'perfect' model.
+
