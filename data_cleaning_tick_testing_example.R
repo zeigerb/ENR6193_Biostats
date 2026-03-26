@@ -4,7 +4,8 @@ library(tidyverse)
 library(janitor)
 library(stringr)
 library(lubridate)
-setwd("~/Teaching/data_intro_ind_study/Lab 8")
+library(readr)
+#setwd("~/Teaching/data_intro_ind_study/Lab 8")
 
 
 # read the csv
