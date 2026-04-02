@@ -1,0 +1,454 @@
+---
+title: "Bayesian_Intro"
+author: "Wynne Moss"
+date: "2023-10-25"
+output: html_document
+---
+
+
+
+# Install packages
+
+Fitting Bayesian models in R can be accomplished using a few different packages, including `nimble`, `rstan`, `rjags`,  
+`R-INLA`. Behind the scenes, these are using different algorithms, which may (or may not) lead to differences in how quickly they fit the model and what estimates they produce. 
+
+This script uses `nimble` which is an R package that allows R to interface with the model fitting engine which is in a different programming language (BUGS). The package `rjags` and the synatx for JAGS is very similar, but `nimble` has some nice features and some more useful error message.
+
+For more information on this package, and some examples of fitting Bayesian models:
+https://github.com/eco4cast/Statistical-Methods-Seminar-Series/tree/main/ponisio-nimble
+https://r-nimble.org
+
+## Downloading nimble
+
+To get the package to work, you need either XCode (mac) or R tools (PC). More information is here: https://r-nimble.org/download
+
+You might already have these, so you can try downloading and running nimble first. If it doesn't work, see the link above.
+
+Download nimble and some other useful packages:
+```{r}
+options(pkgType = "binary")
+install.packages("nimble", type = "binary")
+# install.packages("MCMCvis")
+# install.packages("tidyverse")
+```
+
+Test if the installation worked:
+```{r}
+library(nimble)
+code <- nimbleCode({
+  y ~ dnorm(0,1)
+})
+model <- nimbleModel(code)
+cModel <- compileNimble(model)
+rm(code, model, cModel)
+```
+If there were no error messages, the package is working.
+
+Load other libraries
+```{r}
+library(tidyverse)
+library(MCMCvis)
+```
+
+# Example 1: A Basic Linear Regression
+
+This example investigates the relationship between years post fire (predictor variable) and species richness (response variable) or biomass (response variable) at 50 field plots.
+
+## Simulating some data to use
+
+No need to change this, just run the code chunk:
+```{r}
+set.seed(231) 
+nsites <- 50
+# use lognormal bc don't want negative years
+years_post_fire <- rlnorm(n = nsites, meanlog = 2.2, sdlog = 0.2)
+years_post_fire <- round(years_post_fire, 0)
+# true slopes and intercepts
+slope_fire_richness <- 0.55
+intercept_richness <- -3
+slope_fire_biomass <- 20
+intercept_biomass <- 200
+# predicted richness/biomass based on linear model
+log_pred_richness <- intercept_richness + slope_fire_richness*years_post_fire
+pred_richness <- exp(log_pred_richness)
+pred_biomass <- intercept_biomass + slope_fire_biomass*years_post_fire
+sigma_biomass <- 20
+# observed richness/biomass (with error)
+meas_richness <- rpois(n = nsites, lambda = pred_richness)
+meas_biomass <- rnorm(n = nsites, mean = pred_biomass, sd = sigma_biomass)
+
+fire_data <- data.frame(years_post_fire = years_post_fire, pred_biomass = pred_biomass,
+                        meas_biomass = meas_biomass, pred_richness = pred_richness, meas_richness = meas_richness)
+fire_data %>% arrange(years_post_fire) -> fire_data
+```
+
+Visualize data:
+```{r}
+ggplot(fire_data) +
+  geom_point(aes(x = years_post_fire, y = meas_biomass)) +
+  xlab("Years post fire") +
+  ylab("Measured biomass")
+```
+
+```{r}
+ggplot(fire_data) +
+  geom_point(aes(x = years_post_fire, y = meas_richness)) +
+  xlab("Years post fire") +
+  ylab("Measured species richness")
+```
+
+## Fit it with glm
+
+Fit the model using a non-Bayesian approach. 
+```{r}
+biomass_model <- glm(meas_biomass~years_post_fire, data = fire_data, family = "gaussian")
+summary(biomass_model)
+```
+Estimated slope and intercept are close to true values (20 and 200)
+
+```{r}
+richness_model <- glm(meas_richness~years_post_fire, data = fire_data, family = "poisson")
+summary(richness_model)
+```
+Estimated slope and intercept are close to true values (0.55 and -3)
+
+## Fit it with nimble
+
+First, fit the model with biomass as a response variable, which can be modeled as a normally distributed variable. 
+We need a few things to make a Bayesian model work: 
+
+1) Information on the *deterministic* part of the model 
+- What is the proposed relationship between the response variable and the predictor variable? Linear? Polynomial? Something else? 
+- This part can often include a link function, which makes the relationship linear
+- Sometimes this part involves or is called a 'process model' 
+
+2) Information on the *stochastic* part of the model (error)
+- If there is a linear relationship between fire and biomass, we still don't expect our observations to fall exactly on the best fit line. There is still residual error.
+- We need to tell the model about how the real data are generated
+- Sometimes this part involves or is called an 'observation' model 
+
+3) Priors
+- What do we expect about the true parameters
+- Can be vague, or based on previous information
+
+We can have more than that in a Bayesian model - e.g., more than one stochastic or deterministic process, but this is the simplest case for a linear regression.
+
+## What are parameters vs. covariates vs. latent states?
+
+Covariates = data you collect that is not the response variable, but you think might affect the response variable (e.g. years post fire, precipitation, plot location)
+
+Parameters = what you want to estimate and/or things you don't know about. Parameters have some true value that we want to estimate. In a Bayesian model, parameters require priors.
+
+Latent states = these are similar to parameters in that they are estimated (we can not measure them). But they are affected by the parameters and are usually stochastic in some way. In a Bayesian model, latent states do not require priors, but in some cases you must provide the model with a decent guess of what the latent states are to get the model started -- this is called initializing. Latent states are not a part of all Bayesian models.
+
+## Writing the model code 
+The first step is to write down the model code, which tells the model the 3 things mentioned above (and can include more things, like calculating derived variables). The syntax for this part looks a lot like JAGS code, so if you find JAGS code online it will usually work in nimble. The one thing to be aware of is that normal distributions in JAGS are written as (mean, precision) whereas in other languages it is written as (mean, standard deviation), so you may have to convert using the formula: precision = 1/standard deviation^2 or 1/variance. Standard deviation is denoted as $sigma$.
+
+```{r}
+biomass_model_code <- nimbleCode({
+
+  for(i in 1:nSites){
+    # deterministic model
+    # the predicted biomass is a linear function of years post fire
+    # the parameters b0 and b1 (intercept and slope) are the same across all datapoints
+    # the predicted biomass and years post fire are unique to each data point, so they are indexed
+    bio[i] <- b0 + b1*years_post_fire[i]
+
+    # observation model/likelihood model
+    # our observations are not going to fall exactly on the line
+    # rather, they are distributed normally around the predicted biomass
+    # this is a stochastic process - deonted with a ~ instead of a <- 
+    # we don't know how noisy they are, so sigma (the variance) is also a parameter we need to estimate
+    obsbio[i] ~ dnorm(bio[i], sd = sigma)
+
+  }
+  # priors
+  
+  # intercept =  biomass when years post fire is 0
+  b0 ~ dnorm(150, sd = 100) 
+  # slope = effect of years post fire on biomass 
+  b1 ~ dnorm(0, sd = 100)
+  # sigma = standard deviation for observations (aka noise, aka observation error)
+  # this can never be negative, so a normal distribution is usually not appropriate
+  # we'll just say sd is somewhere between 0 and 100
+  sigma ~ dunif(0,100)
+})
+```
+
+
+## Constructing the model
+The next step is to construct a nimble model. This step forces nimble to interpret the model, and will often reveal errors in your code if there are any.
+```{r}
+biomass_model <- nimbleModel(
+  code = biomass_model_code
+)  # error! it doesn't know what nSites is. So we have to define that as a constant.
+```
+
+We can add the constants, as well as the data:
+
+```{r}
+biomass_model <- nimbleModel(
+  code = biomass_model_code,
+  data = list(obsbio = fire_data$meas_biomass, years_post_fire = fire_data$years_post_fire),
+  constants = list(nSites = nrow(fire_data))
+)
+
+```
+
+## Fit the model 
+
+To fit the model, we need (1) the model and the constants associated with it (see above) (2) the data, as a list, and (3) sometimes, initialization values, also as a list. We can also change several aspects of the model fitting procedure (e.g., number of chains, iterations)
+```{r}
+# initialize the model
+biomass_model$setInits(list(b0 = 100, b1 = 0, sigma = 20))
+
+# fit the model (run the MCMC)
+biomass_MCMC <- nimbleMCMC(biomass_model, # the model
+                            nchains = 3, niter = 2000, nburnin = 500)
+
+```
+
+## Explore output
+```{r}
+MCMCtrace(biomass_MCMC, pdf = FALSE)
+MCMCsummary(biomass_MCMC)
+```
+
+The trace plot for standard deviation (sigma) looks pretty good, but the other two are examples of trace plots that indicate poor model fitting. The posterior distributions on the intercept (b0) and slope (b1) are still quite close to the true values, though. This is an example of what happens when you have unscaled data. Plotting the slope and intercept against each other reveals that they are tightly correlated:
+
+```{r}
+MCMCchains(biomass_MCMC, params = c("b0", "b1")) %>% data.frame() %>% ggplot(aes(x=b0, y = b1)) + geom_point()
+MCMCchains(biomass_MCMC, params = c("b0", "sigma")) %>% data.frame() %>% ggplot(aes(x=b0, y = sigma)) + geom_point()
+
+```
+
+Correlation among parameter estimates is not always a problem, but if the chains look very unmixed, it can help to center the predictor variable. 
+
+## Center the data
+Centering the predictor variables will help with parameter estimation, and is something you should consider doing right away. You can either center them (subtract the mean from every observation) or Z-transform them (center them, then divide by the standard deviation of the variable). Here we are just centering the predictor variable for years post fire, using the 'scale' function.
+```{r}
+fire_data$centered_years_post_fire <- as.numeric(scale(fire_data$years_post_fire, scale = FALSE)) # scale = FALSE just centers the data, whereas scale = TRUE would z-transform
+biomass_model$setData(list(obsbio = fire_data$meas_biomass, years_post_fire = fire_data$centered_years_post_fire)) # add the new variable to the model
+```
+
+Refit the model:
+```{r}
+biomass_MCMC <- nimbleMCMC(biomass_model, # the model
+                            nchains = 3, niter = 2000, nburnin = 500)
+```
+
+Examine output
+```{r}
+MCMCtrace(biomass_MCMC, pdf = FALSE)
+MCMCsummary(biomass_MCMC)
+mean(fire_data$years_post_fire)
+# the intercept should now be the predicted biomass when years post fire is at is average (instead of 0)
+# true centered intercept
+intercept_biomass + slope_fire_biomass*mean(fire_data$years_post_fire) 
+```
+
+## Repeat for the species richness data
+## Writing the model code 
+
+This time we are modeling species richness as a function of years post fire. We could start with a linear regression, similar to last time.
+
+```{r}
+richness_model_code <- nimbleCode({
+
+  for(i in 1:nSites){
+    # deterministic model
+    # the predicted richness is a linear function of years post fire
+    rich[i] <- b0 + b1*years_post_fire[i]
+
+    # observation model/likelihood model
+    meas_rich[i] ~ dnorm(rich[i], sd = sigma)
+
+  }
+  # priors
+  
+  # intercept =  richness when years post fire is at the mean (bc we centered)
+  b0 ~ dnorm(6, sd = 2) 
+  # slope = effect of years post fire on richness 
+  b1 ~ dnorm(0.2, sd = 5)
+  # sigma = standard deviation for observations (aka noise, aka observation error)
+  # this can never be negative, so a normal distribution is usually not appropriate
+  # we'll just say sd is somewhere between 0 and 100
+  sigma ~ dunif(0,100)
+})
+```
+
+
+## Constructing the model
+The next step is to construct a nimble model. This step forces nimble to interpret the model, and will often reveal errors in your code if there are any.
+```{r}
+richness_model <- nimbleModel(
+  code = richness_model_code,
+  data = list(meas_rich = fire_data$meas_richness, years_post_fire = fire_data$years_post_fire),
+  constants = list(nSites = nrow(fire_data))
+) 
+# initialize the model
+richness_model$setInits(list(b0 = 2, b1 = 0, sigma = 20))
+```
+
+## Fit the model 
+To fit the model, we need (1) the model and the constants associated with it (see above) (2) the data, as a list, and (3) sometimes, initialization values, also as a list. We can also change several aspects of the model fitting procedure (e.g., number of chains, iterations)
+```{r}
+richness_MCMC <- nimbleMCMC(richness_model, # the model
+                            nchains = 3, niter = 2000, nburnin = 500)
+
+```
+
+## Explore output
+```{r}
+MCMCtrace(richness_MCMC, pdf = FALSE)
+MCMCsummary(richness_MCMC)
+```
+
+
+## View predictions
+
+Check how well the model fits the data:
+
+The function `MCMCpstr` is used to summarize the posterior for a parameter. In this case we are plotting the best fit line using the mean of the posterior for the slope (b1) and intercept (b0).
+
+```{r}
+ggplot() +
+  geom_point(data = fire_data, aes(x=years_post_fire, y = meas_richness)) +
+  geom_abline(slope = MCMCpstr(richness_MCMC, params = "b1", func = mean)$b1,
+              intercept =  MCMCpstr(richness_MCMC, params = "b0", func = mean)$b0) +
+  xlab("years post fire") +
+  ylab("richness") +
+  xlim(0, 12)
+```
+The model doesn't fit the data very well at all, and it doesn't reflect the non linear pattern we see in the data. This is because richness is not a normally distributed variable, like it is being modeled. It is always > 0, and it is a whole number (e.g., Poisson). The model also isn't dealing with a major feature of Poisson-distributed data -- that the variance in the observed data will increase with the mean. Therefore, we need to correct the model to reflect this. 
+
+## Using a link function
+We still think that richness is related to years post fire. If we use a linear regression (y = mx+b) then, no matter what, there will be some value of x that makes y (predicted richness) negative. Sometimes this is not a big deal (in our case, the predicted richness > 0 for the entire range of our data). However, the non-linearity is still a problem. To correct this, we want to use a *link function*.
+
+A common link function for a Poisson variable is `log`. For a probability, we would use `logit`, i.e., log-odds. 
+
+Now, the linear model predicts the *log of species richness* as a function of years post fire, instead of species richness directly. To get predicted species richness, we can exponentiate it. The model might predict really negative values of log-species richness, which would equate to 0 species. Now, no matter what value of year (x) is fed in, we will never get a negative predicted richness.
+
+The stochastic model needs to be revised as well. The data, *observed species richness*, should be a whole number, centered around the predicted species richness (which is not a whole number). But, again, they aren't normally distributed around that number, they are distributed using a Poisson. 
+
+The new model:
+
+```{r}
+richness_model_code <- nimbleCode({
+
+  for(i in 1:nSites){
+    # deterministic model
+    # the predicted log richness is a linear function of years post fire
+    logrich[i] <- b0 + b1*years_post_fire[i]
+    # the predicted richness is e^(log-richness)
+    predrich[i] <- exp(logrich[i])
+    # observation model/likelihood model
+    # observations are drawn from a poisson centered around the predicted richness 
+    meas_rich[i] ~ dpois(predrich[i])
+
+  }
+  # priors
+  
+  # intercept =  log-richness when years post fire is 0
+  b0 ~ dnorm(-2, sd = 5) 
+  # slope = effect of years post fire on log-richness 
+  b1 ~ dnorm(0, sd = 5)
+
+    # since the poisson distribution doesn't use a separate measure of variance we don't need a prior on sigma anymore
+
+})
+```
+
+Refit the model: 
+```{r}
+richness_model <- nimbleModel(
+  code = richness_model_code,
+  data = list(meas_rich = fire_data$meas_richness, years_post_fire = fire_data$years_post_fire),
+  constants = list(nSites = nrow(fire_data))
+)
+richness_MCMC <- nimbleMCMC(richness_model, # the model
+                            nchains = 3, niter = 2000, nburnin = 500)
+
+```
+
+Examine output
+```{r}
+MCMCtrace(richness_MCMC, pdf = FALSE)
+MCMCsummary(richness_MCMC)
+```
+
+
+```{r}
+best_fit <- data.frame(x=seq(0,10, by = 0.1)) %>% mutate(y =MCMCpstr(richness_MCMC, params = "b0", func = mean)$b0 +
+                                                           MCMCpstr(richness_MCMC, params = "b1", func = mean)$b1*x
+                                                           )
+ggplot() +
+  geom_point(data = fire_data, aes(x=years_post_fire, y = meas_richness)) +
+  geom_line(aes(x=best_fit$x, y = exp(best_fit$y), group = 1)) +
+  xlab("years post fire") +
+  ylab("richness") +
+  xlim(0, 12)
+```
+
+
+## Try again with centered data
+```{r}
+richness_model_code <- nimbleCode({
+
+  for(i in 1:nSites){
+    # deterministic model
+    # the predicted log richness is a linear function of years post fire
+    logrich[i] <- b0 + b1*years_post_fire[i]
+    # the predicted richness is e^(log-richness)
+    predrich[i] <- exp(logrich[i])
+    # observation model/likelihood model
+    # observations are drawn from a poisson centered around the predicted richness 
+    meas_rich[i] ~ dpois(predrich[i])
+
+  }
+  # priors
+  
+  # intercept =  log-richness when mean years post fire is 0
+  b0 ~ dnorm(0, sd = 2) 
+  # slope = effect of years post fire on log-richness 
+  b1 ~ dnorm(0, sd = 2)
+
+    # since the poisson distribution doesn't use a separate measure of variance we don't need a prior on sigma anymore
+
+})
+```
+
+Refit the model:
+```{r}
+richness_model <- nimbleModel(
+  code = richness_model_code,
+  data = list(meas_rich = fire_data$meas_richness, years_post_fire = fire_data$centered_years_post_fire),
+  constants = list(nSites = nrow(fire_data))
+)
+richness_MCMC <- nimbleMCMC(richness_model, # the model
+                            nchains = 3, niter = 2000, nburnin = 500)
+
+```
+
+Examine output
+```{r}
+MCMCtrace(richness_MCMC, pdf = FALSE)
+MCMCsummary(richness_MCMC)
+```
+
+
+Plot the best fit line
+```{r}
+years <- seq(min(fire_data$years_post_fire),max(fire_data$years_post_fire), by = 0.1)
+centered_years <- years-mean(fire_data$years_post_fire)
+pred_richness <- exp(MCMCpstr(richness_MCMC, params = "b0", func = mean)$b0 +
+                       MCMCpstr(richness_MCMC, params = "b1", func = mean)$b1*centered_years)
+pred_df <- data.frame(years, centered_years, pred_richness)
+ggplot() + 
+  geom_line(data = pred_df, aes(x=years, y = pred_richness, group = 1)) +
+  geom_point(data = fire_data, aes(x=years_post_fire, y = meas_richness), col = "red") +
+  xlab("Years post fire") +
+  ylab("Richness")
+
+```
+
