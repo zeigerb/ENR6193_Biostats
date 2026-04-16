@@ -1,0 +1,59 @@
+---
+title: "NewMarkdown"
+author: "Benjamin Zeiger"
+date: "2026-04-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+
+
+Markdown files always retain the folder they are saved in as the default working directory
+
+```{r}
+
+read_excel("TestSheet.xlsx")
+
+```
+
+
+We can change the directory manually, but it only lasts for one code chunk:
+
+```{r}
+
+setwd("C:/Users/zeige/Documents/School/ENR_PhD_Courses/6193_Stat/git/ENR6193_Biostats/TestFolder/data_files")
+
+read_excel("data_excel.xlsx")
+
+```
+
+
+Note above that RStudio warns us the directory will be *reset after the chunk finishes running*.
+
+So, if we want to access the "data_excel" document, we need to specify the folder again.
+
+```{r}
+
+read_excel("data_excel.xlsx")
+
+```
+
+But we can still access the TestSheet doc without specifying path
+
+```{r}
+
+read_excel("TestSheet.xlsx")
+
+```
+
+
+
+
