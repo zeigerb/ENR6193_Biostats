@@ -14,9 +14,13 @@ library(tidyverse)
 library(readxl)
 ```
 
-
-
 Markdown files always retain the folder they are saved in as the default working directory
+
+```{r}
+getwd()
+```
+
+So, we dont need to specify a folder if we want to access a document adjacent to the .Rmd file.
 
 ```{r}
 

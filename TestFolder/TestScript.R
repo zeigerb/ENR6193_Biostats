@@ -18,6 +18,13 @@ read_excel("TestSheet.xlsx")
 #set working directory to another folder adjacent to the script
 setwd(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/data_files"))
 
+#we'll use tidy to break it down a bit
+
+rstudioapi::getActiveDocumentContext()$path %>%
+  dirname() %>%
+  paste0("/data_files") %>%
+  setwd()
+
 read_excel("data_excel.xlsx")
 
 
